@@ -947,6 +947,7 @@ function handlePermissionChange() {
         $(".add-temp").prop("checked", true);
         $(".add-temp").attr("disabled", true);
     } else {
+        $(".add-temp").prop("checked", false);
         $(".add-temp").attr("disabled", false);
     }
 
