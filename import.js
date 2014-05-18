@@ -387,6 +387,7 @@ function main() {
     console.log("This script will generate a lot of text output, both informational and " +
                 "possibly errors.  I recommend running it as `node import.js | " +
                 "tee import.log` or similar to pipe output to a log file for easy reading");
+	$( document ).tooltip();
     var rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout

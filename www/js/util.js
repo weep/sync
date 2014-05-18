@@ -1378,6 +1378,7 @@ function addChatMessage(data) {
     // a message, it highlights messages from that user
     div.data("sender", data.username);
     div.appendTo($("#messagebuffer"));
+	div.attr("title",$("#currenttitle").text().substring(19))
     div.mouseover(function() {
         $("#messagebuffer").children().each(function() {
             var name = $(this).data("sender");

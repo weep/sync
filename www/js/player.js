@@ -86,7 +86,14 @@ var YouTubePlayer = function (data) {
 
     self.play = function () {
         if(self.player && self.player.playVideo)
+        {
             self.player.playVideo();
+            if (USEROPTS.default_quality) {
+                self.player.setPlaybackQuality(USEROPTS.default_quality);
+                // What's that?  Another stupid hack for the HTML5 player?
+                self.player.setPlaybackQuality(USEROPTS.default_quality);
+            }
+        }
     };
 
     self.isPaused = function (callback) {
