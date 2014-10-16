@@ -34,7 +34,7 @@ var YouTubePlayer = function (data) {
                 width: VWIDTH,
                 videoId: data.id,
                 playerVars: {
-                    autohide: 1,        // Autohide controls
+                    autohide: 2,        // Autohide controls
                     autoplay: 1,        // Autoplay video
                     controls: 1,        // Show controls
                     iv_load_policy: 3,  // No annotations
