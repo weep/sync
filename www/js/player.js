@@ -1,19 +1,8 @@
-/*}
-The MIT License (MIT)
-Copyright (c) 2013 Calvin Montgomery
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
-
 var VIMEO_FLASH = false;
 
 function removeOld(replace) {
     $("#sc_volume").remove();
-    replace = replace || $("<div/>");
+    replace = replace || $("<div/>").addClass("embed-responsive-item");
     var old = $("#ytapiplayer");
     replace.insertBefore(old);
     old.remove();
@@ -28,10 +17,10 @@ var YouTubePlayer = function (data) {
             self.paused = false;
             self.videoId = data.id;
             self.videoLength = data.seconds;
+            self.theYouTubeDevsNeedToFixThisShit = false;
+            self.whyDoesSetPlaybackQualityHaveARaceCondition = true;
             var wmode = USEROPTS.wmode_transparent ? "transparent" : "opaque";
             self.player = new YT.Player("ytapiplayer", {
-                height: VHEIGHT,
-                width: VWIDTH,
                 videoId: data.id,
                 playerVars: {
                     autohide: 2,        // Autohide controls
@@ -44,9 +33,31 @@ var YouTubePlayer = function (data) {
                 events: {
                     onReady: function () {
                         PLAYER.setVolume(VOLUME);
-                        $("#ytapiplayer").width(VWIDTH).height(VHEIGHT);
                     },
                     onStateChange: function (ev) {
+                        if (self.whyDoesSetPlaybackQualityHaveARaceCondition) {
+                            self.whyDoesSetPlaybackQualityHaveARaceCondition = false;
+
+                            if (USEROPTS.default_quality) {
+                                self.player.setPlaybackQuality(USEROPTS.default_quality);
+                            }
+                        }
+
+                        /**
+                         * Race conditions suck.
+                         * Race conditions in other peoples' code that you can't fix
+                         * but are forced to work around suck more.
+                         */
+                        if (ev.data === YT.PlayerState.PLAYING &&
+                            self.theYouTubeDevsNeedToFixThisShit) {
+
+                            if (USEROPTS.default_quality) {
+                                self.player.setPlaybackQuality(USEROPTS.default_quality);
+                            }
+                            PLAYER.pause();
+                            self.theYouTubeDevsNeedToFixThisShit = false;
+                        }
+
                         if(PLAYER.paused && ev.data != YT.PlayerState.PAUSED ||
                            !PLAYER.paused && ev.data == YT.PlayerState.PAUSED) {
                             self.paused = (ev.data == YT.PlayerState.PAUSED);
@@ -69,9 +80,10 @@ var YouTubePlayer = function (data) {
     self.load = function (data) {
         if(self.player && self.player.loadVideoById) {
             self.player.loadVideoById(data.id, data.currentTime);
+            self.whyDoesSetPlaybackQualityHaveARaceCondition = true;
             if (USEROPTS.default_quality) {
-                self.player.setPlaybackQuality(USEROPTS.default_quality);
-                // What's that?  Another stupid hack for the HTML5 player?
+                // Try to set it ahead of time, if that works
+                // If not, the onStateChange callback will try again anyways
                 self.player.setPlaybackQuality(USEROPTS.default_quality);
             }
             self.videoId = data.id;
@@ -93,15 +105,6 @@ var YouTubePlayer = function (data) {
                 // What's that?  Another stupid hack for the HTML5 player?
                 self.player.setPlaybackQuality(USEROPTS.default_quality);
             }
-        }
-    };
-
-    self.isPaused = function (callback) {
-        if(self.player && self.player.getPlayerState) {
-            var state = self.player.getPlayerState();
-            callback(state != YT.PlayerState.PLAYING);
-        } else {
-            callback(false);
         }
     };
 
@@ -153,8 +156,6 @@ var VimeoPlayer = function (data) {
             if(USEROPTS.wmode_transparent)
                 iframe.attr("wmode", "transparent");
             iframe.css("border", "none");
-            iframe.width(VWIDTH);
-            iframe.height(VHEIGHT);
 
             $f(iframe[0]).addEvent("ready", function () {
                 self.player = $f(iframe[0]);
@@ -196,10 +197,6 @@ var VimeoPlayer = function (data) {
         self.play = function () {
             if(self.player && self.player.api)
                 self.player.api("play");
-        };
-
-        self.isPaused = function (callback) {
-            callback(self.paused);
         };
 
         self.getTime = function (callback) {
@@ -308,10 +305,6 @@ var VimeoFlashPlayer = function (data) {
             self.player.api_play();
     };
 
-    self.isPaused = function (callback) {
-        callback(self.paused);
-    };
-
     self.getTime = function (callback) {
         if(self.player && self.player.api_getCurrentTime) {
             var t = parseFloat(self.player.api_getCurrentTime());
@@ -343,11 +336,32 @@ var DailymotionPlayer = function (data) {
         removeOld();
         self.videoId = data.id;
         self.videoLength = data.seconds;
+
+        var q = undefined;
+        if (USEROPTS.default_quality) {
+            /* Map youtube-style quality names to dailymotion values */
+            q = {
+                small: 240,
+                medium: 380,
+                large: 480,
+                hd720: 720,
+                hd1080: 1080,
+                highres: 1080
+            }[USEROPTS.default_quality];
+        }
+
+        var params = {
+            autoplay: 1,
+            wmode: USEROPTS.wmode_transparent ? "transparent" : "opaque",
+            quality: q,
+            logo: 0
+        };
+
         self.player = DM.player("ytapiplayer", {
             video: data.id,
             width: parseInt(VWIDTH, 10),
             height: parseInt(VHEIGHT, 10),
-            params: { autoplay: 1 }
+            params: params
         });
 
         self.player.addEventListener("apiready", function (e) {
@@ -397,10 +411,6 @@ var DailymotionPlayer = function (data) {
             self.player.api("play");
     };
 
-    self.isPaused = function (callback) {
-        callback(self.paused);
-    };
-
     self.getTime = function (callback) {
         if(self.player)
             callback(self.player.currentTime);
@@ -413,7 +423,14 @@ var DailymotionPlayer = function (data) {
 
     self.getVolume = function (cb) {
         if (self.player) {
-            cb(self.player.volume);
+            var volume = self.player.muted ? 0 : self.player.volume;
+            /*
+             * If the volume was changed by the UI slider, it will be in the range
+             * [0, 100], otherwise if it was only set by the API, it will be in [0, 1].
+             */
+            if (volume > 1) volume /= 100.0;
+
+            cb(volume);
         }
     };
 
@@ -430,33 +447,36 @@ var SoundcloudPlayer = function (data) {
     // Go figure
     self.soundcloudIsSeriouslyFuckingBroken = VOLUME;
     self.videoId = data.id;
+    self.scuri = data.meta.scuri || self.videoId;
     self.videoLength = data.seconds;
     waitUntilDefined(window, "SC", function () {
         unfixSoundcloudShit();
         var iframe = $("<iframe/>");
-        removeOld(iframe);
+        removeOld();
+        iframe.appendTo($("#ytapiplayer"));
 
-        iframe.attr("id", "ytapiplayer");
-        iframe.attr("src", "https://w.soundcloud.com/player/?url="+self.videoId);
-        iframe.css("width", "100%").attr("height", "166");
+        iframe.attr("id", "scplayer");
+        iframe.attr("src", "https://w.soundcloud.com/player/?url="+self.scuri);
+        iframe.css("height", "166px");
         iframe.css("border", "none");
 
         var volslider = $("<div/>").attr("id", "sc_volume")
+            .css("top", "170px")
             .insertAfter(iframe);
 
         volslider.slider({
             range: "min",
             value: VOLUME * 100,
             stop: function (event, ui) {
-                self.player.setVolume(ui.value);
+                self.player.setVolume(ui.value / 100);
                 self.soundcloudIsSeriouslyFuckingBroken = ui.value / 100;
             }
         });
 
-        self.player = SC.Widget("ytapiplayer");
+        self.player = SC.Widget("scplayer");
 
         self.player.bind(SC.Widget.Events.READY, function () {
-            self.player.load(self.videoId, { auto_play: true });
+            self.player.load(self.scuri, { auto_play: true });
 
             self.player.bind(SC.Widget.Events.PAUSE, function () {
                 PLAYER.paused = true;
@@ -487,9 +507,10 @@ var SoundcloudPlayer = function (data) {
 
     self.load = function (data) {
         self.videoId = data.id;
+        self.scuri = data.meta.scuri || self.videoId;
         self.videoLength = data.seconds;
         if(self.player && self.player.load) {
-            self.player.load(data.id, { auto_play: true });
+            self.player.load(self.scuri, { auto_play: true });
             var soundcloudNeedsToFuckingFixTheirPlayer = function () {
                 self.setVolume(VOLUME);
                 self.player.unbind(SC.Widget.Events.PLAY_PROGRESS);
@@ -506,13 +527,6 @@ var SoundcloudPlayer = function (data) {
     self.play = function () {
         if(self.player && self.player.play)
             self.player.play();
-    };
-
-    self.isPaused = function (callback) {
-        if(self.player && self.player.isPaused)
-            self.player.isPaused(callback);
-        else
-            callback(false);
     };
 
     self.getTime = function (callback) {
@@ -533,7 +547,7 @@ var SoundcloudPlayer = function (data) {
     };
 
     self.setVolume = function (vol) {
-        self.player.setVolume(vol * 100);
+        self.player.setVolume(vol);
     };
 };
 
@@ -567,8 +581,6 @@ var LivestreamPlayer = function (data) {
 
     self.play = function () { };
 
-    self.isPaused = function () { };
-
     self.getTime = function () { };
 
     self.seek = function () { };
@@ -588,12 +600,12 @@ var TwitchTVPlayer = function (data) {
     self.videoId = data.id;
     self.videoLength = data.seconds;
     self.init = function () {
-        var url = "http://www.twitch.tv/widgets/live_embed_player.swf?channel="+self.videoId;
+        var url = "https://www-cdn.jtvnw.net/swflibs/TwitchPlayer.swf?channel="+self.videoId;
         var params = {
             allowFullScreen: "true",
             allowScriptAccess: "always",
             allowNetworking: "all",
-            movie: "http://www.twitch.tv/widgets/live_embed_player.swf",
+            movie: "https://www-cdn.jtvnw.net/swflibs/TwitchPlayer.swf",
             id: "live_embed_player_flash",
             flashvars: "hostname=www.twitch.tv&channel="+self.videoId+"&auto_play=true&start_volume=" + VOLUME
         };
@@ -616,59 +628,6 @@ var TwitchTVPlayer = function (data) {
     self.pause = function () { };
 
     self.play = function () { };
-
-    self.isPaused = function () { };
-
-    self.getTime = function () { };
-
-    self.seek = function () { };
-
-    self.getVolume = function () { };
-
-    self.setVolume = function () { };
-
-    waitUntilDefined(window, "swfobject", function () {
-        self.init();
-    });
-};
-
-var JustinTVPlayer = function (data) {
-    removeOld();
-    var self = this;
-    self.videoId = data.id;
-    self.videoLength = data.seconds;
-    self.init = function () {
-        var prto = location.protocol;
-        var url = "http://www.justin.tv/widgets/live_embed_player.swf?channel="+self.videoId;
-        var params = {
-            allowFullScreen: "true",
-            allowScriptAccess: "always",
-            allowNetworking: "all",
-            movie: "http://www.justin.tv/widgets/live_embed_player.swf",
-            id: "live_embed_player_flash",
-            flashvars: "hostname=www.justin.tv&channel="+self.videoId+"&auto_play=true&start_volume=" + VOLUME
-        };
-        swfobject.embedSWF(url,
-            "ytapiplayer",
-            VWIDTH, VHEIGHT,
-            "8",
-            null, null,
-            params,
-            {}
-        );
-    };
-
-    self.load = function (data) {
-        self.videoId = data.id;
-        self.videoLength = data.seconds;
-        self.init();
-    };
-
-    self.pause = function () { };
-
-    self.play = function () { };
-
-    self.isPaused = function () { };
 
     self.getTime = function () { };
 
@@ -727,8 +686,6 @@ var RTMPPlayer = function (data) {
 
     self.play = function () { };
 
-    self.isPaused = function () { };
-
     self.getTime = function () { };
 
     self.seek = function () { };
@@ -738,126 +695,6 @@ var RTMPPlayer = function (data) {
     };
 
     self.setVolume = function () { };
-
-    waitUntilDefined(window, "swfobject", function () {
-        self.init();
-    });
-};
-
-function flashEventHandler(id, ev, data) {
-    switch (ev) {
-        case "timeupdate":
-            PLAYER.currentTime = data.currentTime;
-            break;
-        case "pause":
-            PLAYER.paused = data.paused;
-            if (CLIENT.leader)
-                sendVideoUpdate();
-            break;
-        case "play":
-            PLAYER.paused = data.paused;
-            if (CLIENT.leader)
-                sendVideoUpdate();
-            break;
-        case "volumechange":
-            PLAYER.volume = (data.muted ? 0 : data.volume);
-            break;
-        case "progress":
-            break;
-        case "onJavaScriptBridgeCreated":
-            PLAYER.player = $("#ytapiplayer")[0];
-            break;
-        default:
-            break;
-    }
-}
-
-var FlashPlayer = function (data) {
-    removeOld();
-    var self = this;
-    self.volume = VOLUME;
-    self.videoId = data.id;
-    self.videoUrl = data.url;
-    self.videoLength = data.seconds;
-    self.paused = false;
-    self.currentTime = 0;
-
-    self.init = function () {
-        var params = {
-            allowFullScreen: "true",
-            allowScriptAccess: "always",
-            allowNetworking: "all",
-            wMode: "direct"
-        };
-
-        var flashvars = {
-            src: encodeURIComponent(self.videoUrl),
-            // For some reason this param seems not to work
-            clipStartTime: Math.floor(data.currentTime),
-            javascriptCallbackFunction: "flashEventHandler",
-            autoPlay: true,
-            volume: VOLUME
-        };
-
-        if (self.videoUrl.indexOf("rtmp") === 0) {
-            flashvars.streamType = "live";
-        } else {
-            flashvars.streamType = "recorded";
-        }
-
-        swfobject.embedSWF("/StrobeMediaPlayback.swf",
-            "ytapiplayer",
-            VWIDTH, VHEIGHT,
-            "10.1.0",
-            null,
-            flashvars,
-            params,
-            { name: "ytapiplayer" }
-        );
-
-        self.player = $("#ytapiplayer")[0];
-    };
-
-    self.load = function (data) {
-        self.videoId = data.id;
-        self.videoUrl = data.url;
-        self.videoLength = data.seconds;
-        self.init();
-    };
-
-    self.pause = function () {
-        if (self.player && self.player.pause)
-            self.player.pause();
-    };
-
-    self.play = function () {
-        // Why is it play2?  What happened to play1?
-        if (self.player && self.player.play2)
-            self.player.play2();
-    };
-
-    self.isPaused = function (cb) {
-        cb(self.paused);
-    };
-
-    self.getTime = function (cb) {
-        cb(self.currentTime);
-    };
-
-    self.seek = function (to) {
-        if (self.player && self.player.seek) {
-            self.player.seek(Math.floor(to));
-        }
-    };
-
-    self.getVolume = function (cb) {
-        cb(self.volume);
-    };
-
-    self.setVolume = function (vol) {
-        if (self.player && self.player.setVolume)
-            self.player.setVolume(vol);
-    };
 
     waitUntilDefined(window, "swfobject", function () {
         self.init();
@@ -878,11 +715,27 @@ var JWPlayer = function (data) {
 
         jwplayer("ytapiplayer").setup({
             file: self.videoURL,
-            width: VWIDTH,
-            height: VHEIGHT,
-            autostart: true
+            width: "100%",
+            height: "100%",
+            autostart: true,
+            type: data.contentType
         });
+
+        jwplayer().onReady(function() {
+            $("#ytapiplayer").addClass("embed-responsive-item");
+            if ($("#ytapiplayer")[0].tagName === "OBJECT") {
+                $("#ytapiplayer").parent().css("position", "absolute");
+            }
+            handleVideoResize();
+        });
+
         jwplayer().onPlay(function() {
+            /* Somehow JWPlayer manages to have THE SAME PROBLEM AS SOUNDCLOUD.
+             * It seems to be impossible to set the volume before the video has
+             * started playing.  How this is so damn difficult to get right I will
+             * never understand.
+             */
+            self.setVolume(VOLUME);
             self.paused = false;
             if(CLIENT.leader)
                 sendVideoUpdate();
@@ -895,11 +748,15 @@ var JWPlayer = function (data) {
         jwplayer().onComplete(function() {
             socket.emit("playNext");
         });
-        self.setVolume(VOLUME);
     };
 
     self.load = function (data) {
         self.videoId = data.id;
+        if (data.url) {
+            self.videoURL = data.url;
+        } else {
+            self.videoURL = data.id;
+        }
         self.videoLength = data.seconds;
         self.init();
     };
@@ -912,11 +769,6 @@ var JWPlayer = function (data) {
     self.play = function () {
         if(jwplayer)
             jwplayer().play(true);
-    };
-
-    self.isPaused = function (callback) {
-        if(jwplayer)
-            callback(jwplayer().getState() !== "PLAYING");
     };
 
     self.getTime = function (callback) {
@@ -951,8 +803,7 @@ var UstreamPlayer = function (data) {
         removeOld(iframe);
         iframe.attr("width", VWIDTH);
         iframe.attr("height", VHEIGHT);
-        var prto = location.protocol;
-        iframe.attr("src", prto+"//www.ustream.tv/embed/"+self.videoId+"?v=3&wmode=direct");
+        iframe.attr("src", "//www.ustream.tv/embed/"+self.videoId+"?v=3&wmode=direct");
         iframe.attr("frameborder", "0");
         iframe.attr("scrolling", "no");
         iframe.css("border", "none");
@@ -967,8 +818,6 @@ var UstreamPlayer = function (data) {
     self.pause = function () { };
 
     self.play = function () { };
-
-    self.isPaused = function () { };
 
     self.getTime = function () { };
 
@@ -1005,8 +854,6 @@ var ImgurPlayer = function (data) {
 
     self.play = function () { };
 
-    self.isPaused = function () { };
-
     self.getTime = function () { };
 
     self.seek = function () { };
@@ -1026,6 +873,29 @@ var CustomPlayer = function (data) {
         removeOld();
         var div = $("#ytapiplayer");
         div.attr("id", "");
+
+        /*
+         * 2014-12-10
+         *
+         * If a user is connected via HTTPS and the custom link is
+         * HTTP, then the embed fails due to mixed active content
+         * policy.  Display a message indicating this.
+         */
+        if (location.protocol.match(/^https/) &&
+            self.videoId.match(/http:/)) {
+
+            div.html("You are currently connected via HTTPS but " +
+                "the custom embed link uses non-secure HTTP.  " +
+                "Your browser may therefore block it from loading.  " +
+                "To fix this, either add the custom embed as a secure " +
+                "URL (https://...) if the source supports it, or " +
+                "visit this page over plain HTTP (your websocket will still " +
+                "use secure HTTPS for communication, just the page " +
+                "will load over plain HTTP).");
+
+            // Try to salvage the link
+            self.videoId = self.videoId.replace(/http:/g, "https:");
+        }
         div.append(self.videoId);
 
         self.player = div.find("iframe");
@@ -1046,8 +916,6 @@ var CustomPlayer = function (data) {
 
     self.play = function () { };
 
-    self.isPaused = function () { };
-
     self.getTime = function () { };
 
     self.seek = function () { };
@@ -1059,102 +927,74 @@ var CustomPlayer = function (data) {
     self.init();
 };
 
-var GoogleDocsPlayer = function (data) {
+function FilePlayer(data) {
     var self = this;
+
     self.init = function (data) {
-        self.videoId = data.id;
-        self.videoLength = data.seconds;
-        self.paused = false;
-        var wmode = USEROPTS.wmode_transparent ? "transparent" : "opaque";
-        self.player = $("<object/>", data.object)[0];
-        $(self.player).attr("data", data.object.data);
-        $(self.player).attr("width", VWIDTH)
-                      .attr("height", VHEIGHT);
-        data.params.forEach(function (p) {
-            $("<param/>", p).appendTo(self.player);
-        });
-        removeOld($(self.player));
-        self.setVolume(VOLUME);
-    };
-
-    self.load = function (data) {
-        self.init(data);
-    };
-
-    self.pause = function () {
-        if(self.player && self.player.pauseVideo)
-            self.player.pauseVideo();
-    };
-
-    self.play = function () {
-        if(self.player && self.player.playVideo)
-            self.player.playVideo();
-    };
-
-    self.isPaused = function (callback) {
-        if(self.player && self.player.getPlayerState) {
-            var state = self.player.getPlayerState();
-            callback(state != YT.PlayerState.PLAYING);
-        } else {
-            callback(false);
-        }
-    };
-
-    self.getTime = function (callback) {
-        if(self.player && self.player.getCurrentTime)
-            callback(self.player.getCurrentTime());
-    };
-
-    self.seek = function (time) {
-        if(self.player && self.player.seekTo)
-            self.player.seekTo(time, true);
-    };
-
-    self.getVolume = function (cb) {
-        if (!self.player || !self.player.getVolume || !self.player.isMuted) {
+        if (!data.url) {
             return;
         }
-
-        // YouTube's API is strange in the sense that getVolume() returns
-        // the regular (unmuted) volume even if it is muted...
-        // YouTube's volume is 0..100, normalize it to 0..1
-        var vol = self.player.isMuted() ? 0 : (self.player.getVolume() / 100);
-        cb(vol);
-    };
-
-    self.setVolume = function (vol) {
-        if (self.player && self.player.setVolume) {
-            self.player.setVolume(vol * 100);
-        }
-    };
-
-    self.init(data);
-};
-
-function RawVideoPlayer(data) {
-    var self = this;
-    self.init = function (data) {
         self.videoId = data.id;
         self.videoURL = data.url;
-        var video = $("<video/>")
+        var isAudio = data.meta.codec && data.meta.codec.match(/^mp3$|^vorbis$/);
+        var video;
+        if (isAudio) {
+            video = $("<audio/>");
+        } else {
+            video = $("<video/>")
+        }
+        video
+            .addClass("embed-responsive-item")
             .attr("src", self.videoURL)
             .attr("controls", "controls")
             .attr("id", "#ytapiplayer")
             .attr("width", VWIDTH)
             .attr("height", VHEIGHT)
+            .attr("autoplay", true)
             .html("Your browser does not support HTML5 <code>&lt;video&gt;</code> tags :(");
         video.error(function (err) {
             setTimeout(function () {
-                fallbackRaw(data);
+                console.log("<video> tag failed, falling back to Flash");
+                console.log(err);
+                PLAYER = new JWPlayer(data);
+                PLAYER.type = "jw";
             }, 100);
         });
         removeOld(video);
         self.player = video[0];
+        if (!Object.hasOwnProperty.call(self, "paused")) {
+            Object.defineProperty(self, "paused", {
+                get: function () {
+                    return self.player.paused;
+                }
+            });
+        }
+        self.player.onpause = function () {
+            self.paused = true;
+            if (CLIENT.leader) {
+                sendVideoUpdate();
+            }
+        };
+        self.player.onplay = function () {
+            self.paused = false;
+            if (CLIENT.leader) {
+                sendVideoUpdate();
+            }
+        };
+        self.player.onended = function () {
+            if (CLIENT.leader) {
+                socket.emit("playNext");
+            }
+        };
         self.setVolume(VOLUME);
     };
 
     self.load = function (data) {
-        self.init(data);
+        if (data.forceFlash) {
+            self.initFlash(data);
+        } else {
+            self.init(data);
+        }
     };
 
     self.pause = function () {
@@ -1169,12 +1009,6 @@ function RawVideoPlayer(data) {
         }
     };
 
-    self.isPaused = function (callback) {
-        if (self.player) {
-            callback(self.player.paused);
-        }
-    };
-
     self.getTime = function (callback) {
         if (self.player) {
             callback(self.player.currentTime);
@@ -1183,7 +1017,10 @@ function RawVideoPlayer(data) {
 
     self.seek = function (time) {
         if (self.player) {
-            self.player.currentTime = time;
+            try {
+                self.player.currentTime = time;
+            } catch (e) {
+            }
         }
     };
 
@@ -1203,9 +1040,68 @@ function RawVideoPlayer(data) {
         }
     };
 
-    self.init(data);
+    if (data.forceFlash) {
+        setTimeout(function () {
+            PLAYER = new JWPlayer(data);
+            PLAYER.type = "jw";
+        }, 1);
+    } else {
+        self.init(data);
+    }
 };
 
+var HitboxPlayer = function (data) {
+    var self = this;
+    self.videoId = data.id;
+    self.videoLength = data.seconds;
+    self.init = function () {
+        if (location.protocol.match(/^https/)) {
+            var div = makeAlert("Security Policy",
+                "You are currently connected via HTTPS but " +
+                "Hitbox only supports plain HTTP.  Due to browser " +
+                "security policy, the embed player cannot be loaded.  " +
+                "In order to watch the video, you must visit this page " +
+                "from its plain HTTP URL (your websocket will still be " +
+                "secured with HTTPS).  Please complain to Hitbox about this.",
+                "alert-danger");
+            div.addClass("embed-responsive-item");
+            removeOld(div);
+            return;
+        }
+
+        var iframe = $("<iframe/>")
+            .attr("src", "http://hitbox.tv/embed/" + self.videoId)
+            .attr("webkitAllowFullScreen", "")
+            .attr("mozallowfullscreen", "")
+            .attr("allowFullScreen", "");
+
+        if (USEROPTS.wmode_transparent)
+            iframe.attr("wmode", "transparent");
+
+        removeOld(iframe);
+        self.player = iframe;
+    };
+
+    self.load = function (data) {
+        self.videoId = data.id;
+        self.videoLength = data.seconds;
+        self.init();
+    };
+
+    self.pause = function () { };
+
+    self.play = function () { };
+
+    self.getTime = function () { };
+
+    self.seek = function () { };
+
+    self.getVolume = function () { };
+
+    self.setVolume = function () { };
+
+    self.init();
+};
 
 function handleMediaUpdate(data) {
     // Don't update if the position is past the video length, but
@@ -1226,21 +1122,26 @@ function handleMediaUpdate(data) {
     }
 
     if (wait) {
-        var tm = 1;
         /* Stupid hack -- In this thrilling episode of
            "the YouTube API developers should eat a boat", the
            HTML5 player apparently breaks if I play()-seek(0)-pause()
            quickly (as a "start buffering but don't play yet"
            mechanism)
+
+           Addendum 2014-05-09
+           Made this slightly less hacky by waiting for a PLAYING event
+           to fire instead of just waiting 500ms and assuming that's
+           long enough
         */
         if (PLAYER.type === "yt") {
-            tm = 500;
-        }
-        setTimeout(function () {
+            PLAYER.theYouTubeDevsNeedToFixThisShit = true;
+        } else {
             PLAYER.seek(0);
             PLAYER.pause();
-        }, tm);
+        }
         return;
+    } else if (PLAYER.type === "yt") {
+        PLAYER.theYouTubeDevsNeedToFixThisShit = false;
     }
 
     // Don't synch if leader or synch disabled
@@ -1249,17 +1150,14 @@ function handleMediaUpdate(data) {
 
     // Handle pause/unpause
     if(data.paused) {
-        PLAYER.isPaused(function (paused) {
-            if (!paused) {
-                PLAYER.seek(data.currentTime);
-                PLAYER.pause();
-            }
-        });
+        if (!PLAYER.paused) {
+            PLAYER.seek(data.currentTime);
+            PLAYER.pause();
+        }
     } else {
-        PLAYER.isPaused(function (paused) {
-            if(paused)
-                PLAYER.play();
-        });
+        if (PLAYER.paused) {
+            PLAYER.play();
+        }
     }
 
     // Handle time change
@@ -1297,15 +1195,14 @@ var constructors = {
     "sc": SoundcloudPlayer,
     "li": LivestreamPlayer,
     "tw": TwitchTVPlayer,
-    "jt": JustinTVPlayer,
     "us": UstreamPlayer,
-    "rt": FlashPlayer,
     "jw": JWPlayer,
     "im": ImgurPlayer,
     "cu": CustomPlayer,
-    "gd": GoogleDocsPlayer,
-    "rv": RawVideoPlayer,
-    "fl": FlashPlayer
+    "rt": RTMPPlayer,
+    "rv": FilePlayer,
+    "fi": FilePlayer,
+    "hb": HitboxPlayer
 };
 
 function loadMediaPlayer(data) {

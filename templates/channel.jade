@@ -13,8 +13,8 @@ html(lang="en")
           - var cname = "/r/" + channelName
           ul.nav.navbar-nav
             mixin navdefaultlinks(cname)
-            li: a(href="#", onclick="javascript:showUserOptions()") Options
-            li: a#showchansettings(href="#", onclick="javascript:$('#channeloptions').modal()") Channel Settings
+            li: a(href="javascript:void(0)", onclick="javascript:showUserOptions()") Options
+            li: a#showchansettings(href="javascript:void(0)", onclick="javascript:$('#channeloptions').modal()") Channel Settings
             li.dropdown
               a.dropdown-toggle(href="#", data-toggle="dropdown") Layout
                 b.caret
@@ -38,7 +38,7 @@ html(lang="en")
           #main.row
             #chatwrap.col-lg-5.col-md-5
               #chatheader
-                i#userlisttoggle.glyphicon.glyphicon-chevron-up.pull-left.pointer(title="Show/Hide Userlist")
+                i#userlisttoggle.glyphicon.glyphicon-chevron-down.pull-left.pointer(title="Show/Hide Userlist")
                 span#usercount.pointer Not Connected
                 span#modflair.label.label-default.pull-right.pointer M
                 span#adminflair.label.label-default.pull-right.pointer A
@@ -50,12 +50,13 @@ html(lang="en")
                 input#guestname.form-control(type="text", placeholder="Name")
             #videowrap.col-lg-7.col-md-7
               p#currenttitle Nothing Playing
-              #ytapiplayer
+              .embed-responsive.embed-responsive-16by9
+                #ytapiplayer.embed-responsive-item
           #controlsrow.row
             #leftcontrols.col-lg-5.col-md-5
               button#newpollbtn.btn.btn-sm.btn-default New Poll
             #rightcontrols.col-lg-7.col-md-7
-              #plcontrol.btn-group
+              #plcontrol.btn-group.pull-left
                 button#showsearch.btn.btn-sm.btn-default(title="Search for a video", data-toggle="collapse", data-target="#searchcontrol")
                   span.glyphicon.glyphicon-search
                 button#showmediaurl.btn.btn-sm.btn-default(title="Add video from URL", data-toggle="collapse", data-target="#addfromurl")
@@ -158,6 +159,7 @@ html(lang="en")
               li: a(href="#us-general", data-toggle="tab") General
               li: a(href="#us-playback", data-toggle="tab") Playback
               li: a(href="#us-chat", data-toggle="tab") Chat
+              li: a(href="#us-scriptcontrol", data-toggle="tab") Script Access
               li: a(href="#us-mod", data-toggle="tab", style="") Moderator
           .modal-body
             .tab-content
@@ -165,6 +167,7 @@ html(lang="en")
               mixin us-general()
               mixin us-playback()
               mixin us-chat()
+              mixin us-scripts()
               mixin us-mod()
           .modal-footer
             button.btn.btn-primary(type="button", data-dismiss="modal", onclick="javascript:saveUserOptions()") Save
@@ -176,7 +179,7 @@ html(lang="en")
             button.close(data-dismiss="modal", aria-hidden="true") &times;
             h4 Channel Settings
             ul.nav.nav-tabs
-              li: a(href="#cs-miscoptions", data-toggle="tab") General Settings
+              li.active: a(href="#cs-miscoptions", data-toggle="tab") General Settings
               li: a(href="#cs-adminoptions", data-toggle="tab") Admin Settings
               li.dropdown
                 a#cs-edit-dd-toggle(href="#", data-toggle="dropdown") Edit
@@ -221,7 +224,7 @@ html(lang="en")
     script(src="/js/callbacks.js")
     script(defer, src="https://www.youtube.com/iframe_api")
     script(defer, src="//api.dmcdn.net/all.js")
-    script(defer, src="/js/jwplayer.js")
+    script(defer, src="//jwpsrv.com/library/QouFCLBMEeKC+CIACpYGxA.js")
     script(defer, src="/js/sc.js")
     script(defer, src="/js/froogaloop.min.js")
     script(defer, src="/js/swf.js")

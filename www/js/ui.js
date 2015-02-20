@@ -1,14 +1,3 @@
-/*
-The MIT License (MIT)
-Copyright (c) 2013 Calvin Montgomery
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
-
 /* window focus/blur */
 $(window).focus(function() {
     FOCUSED = true;
@@ -242,6 +231,15 @@ $("#newpollbtn").click(showPollMenu);
 
 /* search controls */
 $("#library_search").click(function() {
+    if (!hasPermission("seeplaylist")) {
+        $("#searchcontrol .alert").remove();
+        var al = makeAlert("Permission Denied",
+            "This channel does not allow you to search its library",
+            "alert-danger");
+        al.find(".alert").insertAfter($("#library_query").parent());
+        return;
+    }
+
     socket.emit("searchMedia", {
         source: "library",
         query: $("#library_query").val().toLowerCase()
@@ -250,6 +248,15 @@ $("#library_search").click(function() {
 
 $("#library_query").keydown(function(ev) {
     if(ev.keyCode == 13) {
+        if (!hasPermission("seeplaylist")) {
+            $("#searchcontrol .alert").remove();
+            var al = makeAlert("Permission Denied",
+                "This channel does not allow you to search its library",
+                "alert-danger");
+            al.find(".alert").insertAfter($("#library_query").parent());
+            return;
+        }
+
         socket.emit("searchMedia", {
             source: "library",
             query: $("#library_query").val().toLowerCase()
@@ -340,11 +347,15 @@ function queue(pos, src) {
         var link = $("#mediaurl").val();
         var data = parseMediaLink(link);
         var duration = undefined;
+        var title = undefined;
         if (link.indexOf("jw:") === 0) {
             duration = parseInt($("#addfromurl-duration-val").val());
             if (duration <= 0 || isNaN(duration)) {
                 duration = undefined;
             }
+        }
+        if (data.type === "fi") {
+            title = $("#addfromurl-title-val").val();
         }
 
         if (data.id == null || data.type == null) {
@@ -354,11 +365,13 @@ function queue(pos, src) {
         } else {
             $("#mediaurl").val("");
             $("#addfromurl-duration").remove();
+            $("#addfromurl-title").remove();
             socket.emit("queue", {
                 id: data.id,
                 type: data.type,
                 pos: pos,
                 duration: duration,
+                title: title,
                 temp: $(".add-temp").prop("checked")
             });
         }
@@ -370,24 +383,49 @@ $("#queue_end").click(queue.bind(this, "end", "url"));
 $("#ce_queue_next").click(queue.bind(this, "next", "customembed"));
 $("#ce_queue_end").click(queue.bind(this, "end", "customembed"));
 
-$("#mediaurl").keyup(function(ev) {
+$("#mediaurl").keydown(function(ev) {
     if (ev.keyCode === 13) {
         queue("end", "url");
-    } else if ($("#mediaurl").val().indexOf("jw:") === 0) {
-        var duration = $("#addfromurl-duration");
-        if (duration.length === 0) {
-            duration = $("<div/>")
-                .attr("id", "addfromurl-duration")
-                .appendTo($("#addfromurl"));
-            $("<span/>").text("JWPlayer Duration (seconds) (optional)")
-                .appendTo(duration);
-            $("<input/>").addClass("form-control")
-                .attr("type", "text")
-                .attr("id", "addfromurl-duration-val")
-                .appendTo($("#addfromurl-duration"));
-        }
     } else {
-        $("#addfromurl-duration").remove();
+        if ($("#mediaurl").val().indexOf("jw:") === 0) {
+            var duration = $("#addfromurl-duration");
+            if (duration.length === 0) {
+                duration = $("<div/>")
+                    .attr("id", "addfromurl-duration")
+                    .appendTo($("#addfromurl"));
+                $("<span/>").text("JWPlayer Duration (seconds) (optional)")
+                    .appendTo(duration);
+                $("<input/>").addClass("form-control")
+                    .attr("type", "text")
+                    .attr("id", "addfromurl-duration-val")
+                    .appendTo($("#addfromurl-duration"));
+            }
+        } else {
+            $("#addfromurl-duration").remove();
+        }
+
+        var url = $("#mediaurl").val().split("?")[0];
+        if (url.match(/^https?:\/\/(.*)?\.(flv|mp4|og[gv]|webm|mp3|mov)$/)) {
+            var title = $("#addfromurl-title");
+            if (title.length === 0) {
+                title = $("<div/>")
+                    .attr("id", "addfromurl-title")
+                    .appendTo($("#addfromurl"));
+                $("<span/>").text("Title (optional)")
+                    .appendTo(title);
+                $("<input/>").addClass("form-control")
+                    .attr("type", "text")
+                    .attr("id", "addfromurl-title-val")
+                    .keydown(function (ev) {
+                        if (ev.keyCode === 13) {
+                            queue("end", "url");
+                        }
+                    })
+                    .appendTo($("#addfromurl-title"));
+            }
+        } else {
+            $("#addfromurl-title").remove();
+        }
     }
 });
 
@@ -463,7 +501,7 @@ $("#shuffleplaylist").click(function() {
 /* load channel */
 
 var loc = document.location+"";
-var m = loc.match(/\/r\/([a-zA-Z0-9-_#]+)$/);
+var m = loc.match(/\/r\/([a-zA-Z0-9-_]+)/);
 if(m) {
     CHANNEL.name = m[1];
     if (CHANNEL.name.indexOf("#") !== -1) {
@@ -471,29 +509,11 @@ if(m) {
     }
 }
 
-/* oh internet explorer, how I hate thee */
-$(":input:not(textarea)").keypress(function(ev) {
-    return ev.keyCode != 13;
-});
-
-if (location.protocol === "https:") {
-    var title = "Warning";
-    var text = "You connected to this page via HTTPS.  Due to browser "+
-               "security policy, certain media players may throw warnings,"+
-               " while others may not work at all due to only being "+
-               "available over plain HTTP.<br>To encrypt your websocket "+
-               "traffic and API calls (logins, account management, etc) "+
-               "while loading this page over plain HTTP, enable the SSL "+
-               "option from the Options menu.";
-    makeAlert(title, text, "alert-warning")
-        .appendTo($("#announcements"));
-}
-
 /* channel ranks stuff */
 function chanrankSubmit(rank) {
     var name = $("#cs-chanranks-name").val();
     socket.emit("setChannelRank", {
-        user: name,
+        name: name,
         rank: rank
     });
 }
@@ -526,7 +546,7 @@ $(".cs-checkbox").change(function () {
     socket.emit("setOptions", data);
 });
 
-$(".cs-textbox").keyup(function () {
+$(".cs-textbox").keydown(function () {
     var box = $(this);
     var key = box.attr("id").replace("cs-", "");
     var value = box.val();
@@ -590,14 +610,7 @@ $("#cs-chatfilters-newsubmit").click(function () {
               "match.");
     }
 
-    try {
-        new RegExp(regex, flags);
-    } catch (e) {
-        alert("Regex error: " + e);
-        return;
-    }
-
-    socket.emit("updateFilter", {
+    socket.emit("addFilter", {
         name: name,
         source: regex,
         flags: flags,
@@ -605,10 +618,12 @@ $("#cs-chatfilters-newsubmit").click(function () {
         active: true
     });
 
-    $("#cs-chatfilters-newname").val("");
-    $("#cs-chatfilters-newregex").val("");
-    $("#cs-chatfilters-newflags").val("");
-    $("#cs-chatfilters-newreplace").val("");
+    socket.once("addFilterSuccess", function () {
+        $("#cs-chatfilters-newname").val("");
+        $("#cs-chatfilters-newregex").val("");
+        $("#cs-chatfilters-newflags").val("");
+        $("#cs-chatfilters-newreplace").val("");
+    });
 });
 
 $("#cs-emotes-newsubmit").click(function () {
@@ -692,10 +707,13 @@ $("#cs-emotes-import").click(function () {
 });
 
 var toggleUserlist = function () {
+    var direction = !USEROPTS.layout.match(/synchtube/) ? "glyphicon-chevron-right" : "glyphicon-chevron-left"
     if ($("#userlist").css("display") === "none") {
         $("#userlist").show();
+        $("#userlisttoggle").removeClass(direction).addClass("glyphicon-chevron-down");
     } else {
         $("#userlist").hide();
+        $("#userlisttoggle").removeClass("glyphicon-chevron-down").addClass(direction);
     }
     scrollChat();
 };
@@ -707,4 +725,40 @@ $(".add-temp").change(function () {
     $(".add-temp").prop("checked", $(this).prop("checked"));
 });
 
+/*
+ * Fixes #417 which is caused by changes in Bootstrap 3.3.0
+ * (see twbs/bootstrap#15136)
+ *
+ * Whenever the active tab in channel options is changed,
+ * the modal must be updated so that the backdrop is resized
+ * appropriately.
+ */
+$("#channeloptions li > a[data-toggle='tab']").on("shown.bs.tab", function () {
+    $("#channeloptions").data("bs.modal").handleUpdate();
+});
+
 applyOpts();
+
+(function () {
+    if (typeof window.MutationObserver === "function") {
+        var mr = new MutationObserver(function (records) {
+            records.forEach(function (record) {
+                if (record.type !== "childList") return;
+                if (!record.addedNodes || record.addedNodes.length === 0) return;
+
+                var elem = record.addedNodes[0];
+                if (elem.id === "ytapiplayer") handleVideoResize();
+            });
+        });
+
+        mr.observe($("#videowrap").find(".embed-responsive")[0], { childList: true });
+    } else {
+        /*
+         * DOMNodeInserted is deprecated.  This code is here only as a fallback
+         * for browsers that do not support MutationObserver
+         */
+        $("#videowrap").find(".embed-responsive")[0].addEventListener("DOMNodeInserted", function (ev) {
+            if (ev.target.id === "ytapiplayer") handleVideoResize();
+        });
+    }
+})();

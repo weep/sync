@@ -1,14 +1,3 @@
-/*
-The MIT License (MIT)
-Copyright (c) 2013 Calvin Montgomery
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
-
 function makeAlert(title, text, klass) {
     if(!klass) {
         klass = "alert-info";
@@ -46,8 +35,6 @@ function formatURL(data) {
             return "http://livestream.com/" + data.id;
         case "tw":
             return "http://twitch.tv/" + data.id;
-        case "jt":
-            return "http://justin.tv/" + data.id;
         case "rt":
             return data.id;
         case "jw":
@@ -57,7 +44,11 @@ function formatURL(data) {
         case "us":
             return "http://ustream.tv/" + data.id;
         case "gd":
+            return "https://docs.google.com/file/d/" + data.id;
+        case "fi":
             return data.id;
+        case "hb":
+            return "http://hitbox.tv/" + data.id;
         default:
             return "#";
     }
@@ -97,18 +88,36 @@ function formatUserlistItem(div) {
     name.addClass(getNameColor(data.rank));
     div.find(".profile-box").remove();
 
+    if (data.afk) {
+        div.addClass("userlist_afk");
+    } else {
+        div.removeClass("userlist_afk");
+    }
+
+    if (div.data("meta") && div.data("meta").muted) {
+        div.addClass("userlist_muted");
+    } else {
+        div.removeClass("userlist_muted");
+    }
+
+    if (div.data("meta") && div.data("meta").smuted) {
+        div.addClass("userlist_smuted");
+    } else {
+        div.removeClass("userlist_smuted");
+    }
+
     var profile = null;
     name.mouseenter(function(ev) {
         if (profile)
             profile.remove();
 
-        var top = ev.clientY + 5// - name.position().top;
-        var left = ev.clientX;
+        var top = ev.clientY + 5;
+        var horiz = ev.clientX;
         profile = $("<div/>")
             .addClass("profile-box linewrap")
             .css("top", top + "px")
-            .css("left", left + "px")
             .appendTo(div);
+
         if(data.profile.image) {
             $("<img/>").addClass("profile-image")
                 .attr("src", data.profile.image)
@@ -127,12 +136,17 @@ function formatUserlistItem(div) {
         }
         $("<hr/>").css("margin-top", "5px").css("margin-bottom", "5px").appendTo(profile);
         $("<p/>").text(data.profile.text).appendTo(profile);
+
+        if ($("body").hasClass("synchtube")) horiz -= profile.outerWidth();
+        profile.css("left", horiz + "px")
     });
     name.mousemove(function(ev) {
-        var top = ev.clientY + 5// - name.position().top;
-        var left = ev.clientX;
-        profile.css("top", top + "px")
-            .css("left", left + "px")
+        var top = ev.clientY + 5;
+        var horiz = ev.clientX;
+
+        if ($("body").hasClass("synchtube")) horiz -= profile.outerWidth();
+        profile.css("left", horiz + "px")
+            .css("top", top + "px");
     });
     name.mouseleave(function() {
         profile.remove();
@@ -238,7 +252,8 @@ function addUserDropdown(entry) {
             .click(function () {
                 var reason = prompt("Enter kick reason (optional)");
                 socket.emit("chatMsg", {
-                    msg: "/kick " + name + " " + reason
+                    msg: "/kick " + name + " " + reason,
+                    meta: {}
                 });
             })
             .appendTo(btngroup);
@@ -250,33 +265,27 @@ function addUserDropdown(entry) {
             .text("Mute")
             .click(function () {
                 socket.emit("chatMsg", {
-                    msg: "/mute " + name
+                    msg: "/mute " + name,
+                    meta: {}
                 });
-                mute.hide();
-                smute.hide();
-                unmute.show();
             })
             .appendTo(btngroup);
         var smute = $("<button/>").addClass("btn btn-xs btn-default")
             .text("Shadow Mute")
             .click(function () {
                 socket.emit("chatMsg", {
-                    msg: "/smute " + name
+                    msg: "/smute " + name,
+                    meta: {}
                 });
-                mute.hide();
-                smute.hide();
-                unmute.show();
             })
             .appendTo(btngroup);
         var unmute = $("<button/>").addClass("btn btn-xs btn-default")
             .text("Unmute")
             .click(function () {
                 socket.emit("chatMsg", {
-                    msg: "/unmute " + name
+                    msg: "/unmute " + name,
+                    meta: {}
                 });
-                unmute.hide();
-                mute.show();
-                smute.show();
             })
             .appendTo(btngroup);
         if (meta.muted) {
@@ -294,7 +303,8 @@ function addUserDropdown(entry) {
             .click(function () {
                 var reason = prompt("Enter ban reason (optional)");
                 socket.emit("chatMsg", {
-                    msg: "/ban " + name + " " + reason
+                    msg: "/ban " + name + " " + reason,
+                    meta: {}
                 });
             })
             .appendTo(btngroup);
@@ -303,13 +313,16 @@ function addUserDropdown(entry) {
             .click(function () {
                 var reason = prompt("Enter ban reason (optional)");
                 socket.emit("chatMsg", {
-                    msg: "/ipban " + name + " " + reason
+                    msg: "/ipban " + name + " " + reason,
+                    meta: {}
                 });
             })
             .appendTo(btngroup);
     }
 
-    entry.contextmenu(function(ev) {
+    var showdd = function(ev) {
+        // Workaround for Chrome
+        if (ev.shiftKey) return true;
         ev.preventDefault();
         if(menu.css("display") == "none") {
             $(".user-dropdown").hide();
@@ -326,7 +339,9 @@ function addUserDropdown(entry) {
             menu.hide();
         }
         return false;
-    });
+    };
+    entry.contextmenu(showdd);
+    entry.click(showdd);
 }
 
 function calcUserBreakdown() {
@@ -534,6 +549,9 @@ function addQueueButtons(li) {
     else if(menu.find(".btn").length != 0) {
         li.unbind("contextmenu");
         li.contextmenu(function(ev) {
+            // Allow shift+click to open context menu
+            // (Chrome workaround, works by default on Firefox)
+            if (ev.shiftKey) return true;
             ev.preventDefault();
             if(menu.css("display") == "none")
                 menu.show("blind");
@@ -588,20 +606,27 @@ function showUserOptions() {
     $("#us-layout").val(USEROPTS.layout);
     $("#us-no-channelcss").prop("checked", USEROPTS.ignore_channelcss);
     $("#us-no-channeljs").prop("checked", USEROPTS.ignore_channeljs);
-    if (!ALLOW_SSL) {
-        $("#us-ssl").prop("checked", false);
-        $("#us-ssl").attr("disabled", true);
-        $("#us-ssl").attr("title", "This server has not enabled SSL");
+    var conninfo = "<strong>Connection Information: </strong>" +
+                   "Connected to <code>" + IO_URL + "</code> (";
+    if (IO_V6) {
+        conninfo += "IPv6, ";
     } else {
-        $("#us-ssl").prop("checked", USEROPTS.secure_connection);
-        $("#us-ssl").attr("disabled", false);
-        $("#us-ssl").attr("title", "");
+        conninfo += "IPv4, ";
     }
+
+    if (IO_URL === IO_URLS["ipv4-ssl"] || IO_URL === IO_URLS["ipv6-ssl"]) {
+        conninfo += "SSL)";
+    } else {
+        conninfo += "no SSL)";
+    }
+
+    conninfo += ".  SSL is enabled by default if it is supported by the server.";
+    $("#us-conninfo").html(conninfo);
+
 
     $("#us-synch").prop("checked", USEROPTS.synch);
     $("#us-synch-accuracy").val(USEROPTS.sync_accuracy);
     $("#us-wmode-transparent").prop("checked", USEROPTS.wmode_transparent);
-    $("#us-no-h264").prop("checked", USEROPTS.no_h264);
     $("#us-hidevideo").prop("checked", USEROPTS.hidevid);
     $("#us-playlistbuttons").prop("checked", USEROPTS.qbtn_hide);
     $("#us-oldbtns").prop("checked", USEROPTS.qbtn_idontlikechange);
@@ -610,13 +635,16 @@ function showUserOptions() {
     $("#us-chat-timestamp").prop("checked", USEROPTS.show_timestamps);
     $("#us-sort-rank").prop("checked", USEROPTS.sort_rank);
     $("#us-sort-afk").prop("checked", USEROPTS.sort_afk);
-    $("#us-chat-notice").prop("checked", USEROPTS.blink_title);
-    $("#us-boop").prop("checked", USEROPTS.boop);
+    $("#us-blink-title").val(USEROPTS.blink_title);
+    $("#us-ping-sound").val(USEROPTS.boop);
     $("#us-sendbtn").prop("checked", USEROPTS.chatbtn);
+    $("#us-no-emotes").prop("checked", USEROPTS.no_emotes);
 
     $("#us-modflair").prop("checked", USEROPTS.modhat);
     $("#us-joinmessage").prop("checked", USEROPTS.joinmessage);
     $("#us-shadowchat").prop("checked", USEROPTS.show_shadowchat);
+
+    formatScriptAccessPrefs();
 
     $("a[href='#us-general']").click();
     $("#useroptions").modal();
@@ -633,7 +661,6 @@ function saveUserOptions() {
     USEROPTS.synch                = $("#us-synch").prop("checked");
     USEROPTS.sync_accuracy        = parseFloat($("#us-synch-accuracy").val()) || 2;
     USEROPTS.wmode_transparent    = $("#us-wmode-transparent").prop("checked");
-    USEROPTS.no_h264              = $("#us-no-h264").prop("checked");
     USEROPTS.hidevid              = $("#us-hidevideo").prop("checked");
     USEROPTS.qbtn_hide            = $("#us-playlistbuttons").prop("checked");
     USEROPTS.qbtn_idontlikechange = $("#us-oldbtns").prop("checked");
@@ -642,9 +669,10 @@ function saveUserOptions() {
     USEROPTS.show_timestamps      = $("#us-chat-timestamp").prop("checked");
     USEROPTS.sort_rank            = $("#us-sort-rank").prop("checked");
     USEROPTS.sort_afk             = $("#us-sort-afk").prop("checked");
-    USEROPTS.blink_title          = $("#us-chat-notice").prop("checked");
-    USEROPTS.boop                 = $("#us-boop").prop("checked");
+    USEROPTS.blink_title          = $("#us-blink-title").val();
+    USEROPTS.boop                 = $("#us-ping-sound").val();
     USEROPTS.chatbtn              = $("#us-sendbtn").prop("checked");
+    USEROPTS.no_emotes            = $("#us-no-emotes").prop("checked");
 
     if (CLIENT.rank >= 2) {
         USEROPTS.modhat      = $("#us-modflair").prop("checked");
@@ -664,7 +692,7 @@ function storeOpts() {
 
 function applyOpts() {
     if ($("#usertheme").attr("href") !== USEROPTS.theme) {
-        $("#usertheme").remove();
+        var old = $("#usertheme").attr("id", "usertheme_old");
         var theme = USEROPTS.theme;
         if (theme === "default") {
             theme = "/css/themes/slate.css";
@@ -673,6 +701,7 @@ function applyOpts() {
             .attr("type", "text/css")
             .attr("id", "usertheme")
             .attr("href", theme)
+            .attr("onload", "$('#usertheme_old').remove()")
             .appendTo($("head"));
         fixWeirdButtonAlignmentIssue();
     }
@@ -709,7 +738,8 @@ function applyOpts() {
         btn.click(function() {
             if($("#chatline").val().trim()) {
                 socket.emit("chatMsg", {
-                    msg: $("#chatline").val()
+                    msg: $("#chatline").val(),
+                    meta: {}
                 });
                 $("#chatline").val("");
             }
@@ -748,11 +778,11 @@ function showPollMenu() {
         .attr("type", "text")
         .appendTo(menu);
 
-    var lbl = $("<label/>").addClass("checkbox")
-        .text("Hide poll results")
-        .appendTo(menu);
+    var checkboxOuter = $("<div/>").addClass("checkbox").appendTo(menu);
+    var lbl = $("<label/>").text("Hide poll results")
+        .appendTo(checkboxOuter);
     var hidden = $("<input/>").attr("type", "checkbox")
-        .appendTo(lbl);
+        .prependTo(lbl);
 
     $("<strong/>").text("Options").appendTo(menu);
 
@@ -850,6 +880,10 @@ function handleModPermissions() {
     $("#cs-afk_timeout").val(CHANNEL.opts.afk_timeout);
     $("#cs-allow_voteskip").prop("checked", CHANNEL.opts.allow_voteskip);
     $("#cs-voteskip_ratio").val(CHANNEL.opts.voteskip_ratio);
+    $("#cs-allow_dupes").prop("checked", CHANNEL.opts.allow_dupes);
+    $("#cs-torbanned").prop("checked", CHANNEL.opts.torbanned);
+    $("#cs-allow_ascii_control").prop("checked", CHANNEL.opts.allow_ascii_control);
+    $("#cs-playlist_max_per_user").val(CHANNEL.opts.playlist_max_per_user || 0);
     (function() {
         if(typeof CHANNEL.opts.maxlength != "number") {
             $("#cs-maxlength").val("");
@@ -868,7 +902,7 @@ function handleModPermissions() {
     })();
     $("#cs-csstext").val(CHANNEL.css);
     $("#cs-jstext").val(CHANNEL.js);
-    $("#cs-motdtext").val(CHANNEL.motd_text);
+    $("#cs-motdtext").val(CHANNEL.motd);
     setParentVisible("a[href='#cs-motdeditor']", hasPermission("motdedit"));
     setParentVisible("a[href='#cs-permedit']", CLIENT.rank >= 3);
     setParentVisible("a[href='#cs-banlist']", hasPermission("ban"));
@@ -898,6 +932,7 @@ function handlePermissionChange() {
     setVisible("#plmeta", hasPermission("seeplaylist"));
     $("#getplaylist").attr("disabled", !hasPermission("seeplaylist"));
 
+    setVisible("#showplaylistmanager", hasPermission("seeplaylist"));
     setVisible("#showmediaurl", hasPermission("playlistadd"));
     setVisible("#showcustomembed", hasPermission("playlistaddcustom"));
     $("#queue_next").attr("disabled", !hasPermission("playlistnext"));
@@ -980,7 +1015,6 @@ function handlePermissionChange() {
 
     $("#chatline").attr("disabled", !hasPermission("chat"));
     rebuildPlaylist();
-    resizeStuff();
 }
 
 function fixWeirdButtonAlignmentIssue() {
@@ -1156,6 +1190,16 @@ function playlistMove(from, after, cb) {
     }
 }
 
+function extractQueryParam(query, param) {
+    var params = {};
+    query.split("&").forEach(function (kv) {
+        kv = kv.split("=");
+        params[kv[0]] = kv[1];
+    });
+
+    return params[param];
+}
+
 function parseMediaLink(url) {
     if(typeof url != "string") {
         return {
@@ -1181,88 +1225,136 @@ function parseMediaLink(url) {
     }
 
     var m;
-    if((m = url.match(/youtube\.com\/watch\?v=([^&#]+)/))) {
+    if((m = url.match(/youtube\.com\/watch\?([^#]+)/))) {
+        return {
+            id: extractQueryParam(m[1], "v"),
+            type: "yt"
+        };
+    }
+
+    if((m = url.match(/youtu\.be\/([^\?&#]+)/))) {
         return {
             id: m[1],
             type: "yt"
         };
     }
 
-    if((m = url.match(/youtu\.be\/([^&#]+)/))) {
+    if((m = url.match(/youtube\.com\/playlist\?([^#]+)/))) {
         return {
-            id: m[1],
-            type: "yt"
-        };
-    }
-
-    if((m = url.match(/youtube\.com\/playlist\?list=([^&#]+)/))) {
-        return {
-            id: m[1],
+            id: extractQueryParam(m[1], "list"),
             type: "yp"
         };
     }
 
-    if((m = url.match(/twitch\.tv\/([^&#]+)/))) {
+    if((m = url.match(/twitch\.tv\/([^\?&#]+)/))) {
         return {
             id: m[1],
             type: "tw"
         };
     }
 
-    if((m = url.match(/justin\.tv\/([^&#]+)/))) {
-        return {
-            id: m[1],
-            type: "jt"
-        };
-    }
-
-    if((m = url.match(/livestream\.com\/([^&#]+)/))) {
+    if((m = url.match(/livestream\.com\/([^\?&#]+)/))) {
         return {
             id: m[1],
             type: "li"
         };
     }
 
-    if((m = url.match(/ustream\.tv\/([^&#]+)/))) {
+    if((m = url.match(/ustream\.tv\/([^\?&#]+)/))) {
         return {
             id: m[1],
             type: "us"
         };
     }
 
-    if((m = url.match(/vimeo\.com\/([^&#]+)/))) {
+    if ((m = url.match(/hitbox\.tv\/([^\?&#]+)/))) {
+        return {
+            id: m[1],
+            type: "hb"
+        };
+    }
+
+    if((m = url.match(/vimeo\.com\/([^\?&#]+)/))) {
         return {
             id: m[1],
             type: "vi"
         };
     }
 
-    if((m = url.match(/dailymotion\.com\/video\/([^&#]+)/))) {
+    if((m = url.match(/dailymotion\.com\/video\/([^\?&#_]+)/))) {
         return {
             id: m[1],
             type: "dm"
         };
     }
 
-    if((m = url.match(/imgur\.com\/a\/([^&#]+)/))) {
+    if((m = url.match(/imgur\.com\/a\/([^\?&#]+)/))) {
         return {
             id: m[1],
             type: "im"
         };
     }
 
-    if((m = url.match(/soundcloud\.com\/([^&#]+)/))) {
+    if((m = url.match(/soundcloud\.com\/([^\?&#]+)/))) {
         return {
             id: url,
             type: "sc"
         };
     }
 
-    if ((m = url.match(/docs\.google\.com\/file\/d\/(.*?)\/edit/))) {
+    if ((m = url.match(/(?:docs|drive)\.google\.com\/file\/d\/([^\/]*)/))) {
         return {
             id: m[1],
             type: "gd"
         };
+    }
+
+    if ((m = url.match(/plus\.google\.com\/(?:u\/\d+\/)?photos\/(\d+)\/albums\/(\d+)\/(\d+)/))) {
+        return {
+            id: m[1] + "_" + m[2] + "_" + m[3],
+            type: "gp"
+        };
+    }
+
+    /*  Shorthand URIs  */
+    // To catch Google Plus by ID alone
+    if ((m = url.match(/(?:gp:)?(\d{21}_\d{19}_\d{19})/))) {
+        return {
+            id: m[1],
+            type: "gp"
+        };
+    }
+    // So we still trim DailyMotion URLs
+    if((m = url.match(/dm:([^\?&#_]+)/))) {
+        return {
+            id: m[1],
+            type: "dm"
+        };
+    }
+    // Generic for the rest.
+    if ((m = url.match(/([a-z]{2}):([^\?&#]+)/))) {
+        return {
+            id: m[2],
+            type: m[1]
+        };
+    }
+
+    /* Raw file */
+    var tmp = url.split("?")[0];
+    if (tmp.match(/^https?:\/\//)) {
+        if (tmp.match(/\.(mp4|flv|webm|og[gv]|mp3|mov)$/)) {
+            return {
+                id: url,
+                type: "fi"
+            };
+        } else {
+            Callbacks.queueFail({
+                link: url,
+                msg: "The file you are attempting to queue does not match the supported " +
+                     "file extensions mp4, flv, webm, ogg, ogv, mp3, mov."
+            });
+            throw new Error("ERROR_QUEUE_UNSUPPORTED_EXTENSION");
+        }
     }
 
     return {
@@ -1363,6 +1455,12 @@ function formatChatMessage(data, last) {
     if (data.meta.shadow) {
         div.addClass("chat-shadow");
     }
+
+    div.find("img").load(function () {
+        if (SCROLLCHAT) {
+            scrollChat();
+        }
+    });
     return div;
 }
 
@@ -1376,21 +1474,15 @@ function addChatMessage(data) {
     var div = formatChatMessage(data, LASTCHAT);
     // Incoming: a bunch of crap for the feature where if you hover over
     // a message, it highlights messages from that user
-    div.data("sender", data.username);
+    var safeUsername = data.username.replace(/[^\w-]/g, '\\$');
+    div.addClass("chat-msg-" + safeUsername);
     div.appendTo($("#messagebuffer"));
 	div.attr("title",$("#currenttitle").text().substring(19))
     div.mouseover(function() {
-        $("#messagebuffer").children().each(function() {
-            var name = $(this).data("sender");
-            if(name == data.username) {
-                $(this).addClass("nick-hover");
-            }
-        });
+        $(".chat-msg-" + safeUsername).addClass("nick-hover");
     });
     div.mouseleave(function() {
-        $("#messagebuffer").children().each(function() {
-            $(this).removeClass("nick-hover");
-        });
+        $(".nick-hover").removeClass("nick-hover");
     });
     // Cap chatbox at most recent 100 messages
     if($("#messagebuffer").children().length > 100) {
@@ -1398,27 +1490,34 @@ function addChatMessage(data) {
     }
     if(SCROLLCHAT)
         scrollChat();
-    if(USEROPTS.blink_title && !FOCUSED && !TITLE_BLINK) {
-        USEROPTS.boop && CHATSOUND.play();
-        TITLE_BLINK = setInterval(function() {
-            if(document.title == "*Chat*")
-                document.title = PAGETITLE;
-            else
-                document.title = "*Chat*";
-        }, 1000);
-    }
-    if(CLIENT.name && data.username != CLIENT.name) {
-        if(data.msg.toUpperCase().indexOf(CLIENT.name.toUpperCase()) != -1) {
+
+    var isHighlight = false;
+    if (CLIENT.name && data.username != CLIENT.name) {
+        if (data.msg.toLowerCase().indexOf(CLIENT.name.toLowerCase()) != -1) {
             div.addClass("nick-highlight");
-            if(!FOCUSED && !TITLE_BLINK) {
-                USEROPTS.boop && CHATSOUND.play();
-                TITLE_BLINK = setInterval(function() {
-                    if(document.title == "*Chat*")
-                        document.title = PAGETITLE;
-                    else
-                        document.title = "*Chat*";
-                }, 1000);
-            }
+            isHighlight = true;
+        }
+    }
+
+    pingMessage(isHighlight);
+
+}
+
+function pingMessage(isHighlight) {
+    if (!FOCUSED) {
+        if (!TITLE_BLINK && (USEROPTS.blink_title === "always" ||
+            USEROPTS.blink_title === "onlyping" && isHighlight)) {
+            TITLE_BLINK = setInterval(function() {
+                if(document.title == "*Chat*")
+                    document.title = PAGETITLE;
+                else
+                    document.title = "*Chat*";
+            }, 1000);
+        }
+
+        if (USEROPTS.boop === "always" || (USEROPTS.boop === "onlyping" &&
+            isHighlight)) {
+            CHATSOUND.play();
         }
     }
 }
@@ -1428,19 +1527,26 @@ function addChatMessage(data) {
 function compactLayout() {
     /* Undo synchtube layout */
     if ($("body").hasClass("synchtube")) {
+        $("body").removeClass("synchtube")
         $("#chatwrap").detach().insertBefore($("#videowrap"));
         $("#leftcontrols").detach().insertBefore($("#rightcontrols"));
         $("#leftpane").detach().insertBefore($("#rightpane"));
         $("#userlist").css("float", "left");
+        if($("#userlisttoggle").hasClass("glyphicon-chevron-left")){
+            $("#userlisttoggle").removeClass("glyphicon-chevron-left").addClass("glyphicon-chevron-right")
+        }
+        $("#userlisttoggle").removeClass("pull-right").addClass("pull-left")
     }
 
     /* Undo fluid layout */
     if ($("body").hasClass("fluid")) {
+        $("body").removeClass("fluid")
         $(".container-fluid").removeClass("container-fluid").addClass("container");
     }
 
     /* Undo HD layout */
     if ($("body").hasClass("hd")) {
+        $("body").removeClass("hd");
         $("#drinkbar").detach().removeClass().addClass("col-lg-12 col-md-12")
           .appendTo("#drinkbarwrap");
         $("#chatwrap").detach().removeClass().addClass("col-lg-5 col-md-5")
@@ -1470,20 +1576,24 @@ function compactLayout() {
         $("#mainpage").css("padding-top", "60px");
         $("#queue").css("max-height", "500px");
         $("#messagebuffer, #userlist").css("max-height", "");
-        $("body").removeClass("hd");
     }
 
-    setTimeout(resizeStuff, 500);
+    $("body").addClass("compact");
+    handleVideoResize();
 }
 
 function fluidLayout() {
     $(".container").removeClass("container").addClass("container-fluid");
     $("footer .container-fluid").removeClass("container-fluid").addClass("container");
     $("body").addClass("fluid");
-    resizeStuff();
+    handleVideoResize();
 }
 
 function synchtubeLayout() {
+    if($("#userlisttoggle").hasClass("glyphicon-chevron-right")){
+        $("#userlisttoggle").removeClass("glyphicon-chevron-right").addClass("glyphicon-chevron-left")
+    }
+    $("#userlisttoggle").removeClass("pull-left").addClass("pull-right")
     $("#videowrap").detach().insertBefore($("#chatwrap"));
     $("#rightcontrols").detach().insertBefore($("#leftcontrols"));
     $("#rightpane").detach().insertBefore($("#leftpane"));
@@ -1544,7 +1654,7 @@ function hdLayout() {
     $("#mainpage").css("padding-top", "0");
 
     $("body").addClass("hd");
-    setTimeout(resizeStuff, 500);
+    handleVideoResize();
 }
 
 function chatOnly() {
@@ -1572,32 +1682,45 @@ function chatOnly() {
         });
     setVisible("#showchansettings", CLIENT.rank >= 2);
     $("body").addClass("chatOnly");
-    resizeStuff();
+    handleWindowResize();
 }
 
-function resizeStuff() {
+function handleWindowResize() {
     if ($("body").hasClass("chatOnly")) {
         var h = $("body").outerHeight() - $("#chatline").outerHeight() -
                 $("#chatheader").outerHeight();
         $("#messagebuffer").outerHeight(h);
         $("#userlist").outerHeight(h);
         return;
+    } else {
+        handleVideoResize();
     }
-    VWIDTH = $("#videowrap").width() + "";
-    VHEIGHT = Math.floor(parseInt(VWIDTH) * 9 / 16 + 1) + "";
-    $("#ytapiplayer").width(VWIDTH).height(VHEIGHT);
-
-    // Only execute if we are on a fluid layout
-    if (!$("body").hasClass("fluid")) {
-        return;
-    }
-
-    var h = parseInt(VHEIGHT) - $("#chatline").outerHeight() - 1;
-    $("#messagebuffer").height(h);
-    $("#userlist").height(h);
 }
 
-$(window).resize(resizeStuff);
+function handleVideoResize() {
+    if ($("#ytapiplayer").length === 0) return;
+
+    var intv, ticks = 0;
+    var resize = function () {
+        if (++ticks > 10) clearInterval(intv);
+        if ($("#ytapiplayer").parent().height() === 0) return;
+        clearInterval(intv);
+
+        var responsiveFrame = $("#ytapiplayer").parent();
+        var height = responsiveFrame.outerHeight() - $("#chatline").outerHeight() - 2;
+        $("#messagebuffer").height(height);
+        $("#userlist").height(height);
+
+        $("#ytapiplayer").attr("height", VHEIGHT = responsiveFrame.outerHeight());
+        $("#ytapiplayer").attr("width", VWIDTH = responsiveFrame.outerWidth());
+    };
+
+    if ($("#ytapiplayer").height() > 0) resize();
+    else intv = setInterval(resize, 500);
+}
+
+$(window).resize(handleWindowResize);
+handleWindowResize();
 
 function removeVideo() {
     try {
@@ -1697,7 +1820,9 @@ function genPermissionsEditor() {
     makeOption("Queue playlist", "playlistaddlist", standard, CHANNEL.perms.playlistaddlist+"");
     makeOption("Queue livestream", "playlistaddlive", standard, CHANNEL.perms.playlistaddlive+"");
     makeOption("Embed custom media", "playlistaddcustom", standard, CHANNEL.perms.playlistaddcustom + "");
+    makeOption("Add raw video file", "playlistaddrawfile", standard, CHANNEL.perms.playlistaddrawfile + "");
     makeOption("Exceed maximum media length", "exceedmaxlength", standard, CHANNEL.perms.exceedmaxlength+"");
+    makeOption("Exceed maximum number of videos per user", "exceedmaxitems", standard, CHANNEL.perms.exceedmaxitems+"");
     makeOption("Add nontemporary media", "addnontemp", standard, CHANNEL.perms.addnontemp+"");
     makeOption("Temp/untemp playlist item", "settemp", standard, CHANNEL.perms.settemp+"");
     makeOption("Lock/unlock playlist", "playlistlock", modleader, CHANNEL.perms.playlistlock+"");
@@ -1709,6 +1834,7 @@ function genPermissionsEditor() {
     makeOption("Vote", "pollvote", standard, CHANNEL.perms.pollvote+"");
     makeOption("View hidden poll results", "viewhiddenpoll", standard, CHANNEL.perms.viewhiddenpoll+"");
     makeOption("Voteskip", "voteskip", standard, CHANNEL.perms.voteskip+"");
+    makeOption("View voteskip results", "viewvoteskip", standard, CHANNEL.perms.viewvoteskip+"");
 
     addDivider("Moderation");
     makeOption("Assign/Remove leader", "leaderctl", modplus, CHANNEL.perms.leaderctl+"");
@@ -1724,6 +1850,7 @@ function genPermissionsEditor() {
     addDivider("Misc");
     makeOption("Drink calls", "drink", modleader, CHANNEL.perms.drink+"");
     makeOption("Chat", "chat", noanon, CHANNEL.perms.chat+"");
+    makeOption("Clear Chat", "chatclear", modleader, CHANNEL.perms.chatclear+"");
 
     var sgroup = $("<div/>").addClass("form-group").appendTo(form);
     var sgroupinner = $("<div/>").addClass("col-sm-8 col-sm-offset-4").appendTo(sgroup);
@@ -1793,14 +1920,13 @@ function chatDialog(div) {
             "z-index": "auto",
             position: "absolute"
         })
-        .appendTo($("body"));
+        .appendTo($("#chatwrap"));
 
     div.appendTo(parent);
     var cw = $("#chatwrap").width();
     var ch = $("#chatwrap").height();
-    var cp = $("#chatwrap").offset();
-    var x = cp.left + cw/2 - parent.width()/2;
-    var y = cp.top + ch/2 - parent.height()/2;
+    var x = cw/2 - parent.width()/2;
+    var y = ch/2 - parent.height()/2;
     parent.css("left", x + "px");
     parent.css("top", y + "px");
     return parent;
@@ -2027,7 +2153,7 @@ function formatCSModList() {
             if (r.rank !== entry.rank) {
                 a.click(function () {
                     socket.emit("setChannelRank", {
-                        user: entry.name,
+                        name: entry.name,
                         rank: r.rank
                     });
                 });
@@ -2092,12 +2218,7 @@ function formatCSBanlist() {
         $("<td/>").text(entry.ip).appendTo(tr);
         $("<td/>").text(entry.name).appendTo(tr);
         $("<td/>").text(entry.bannedby).appendTo(tr);
-        tr.popover({
-            title: "Ban Reason",
-            content: entry.reason,
-            placement: "left",
-            trigger: "hover"
-        });
+        tr.attr("title", "Ban Reason: " + entry.reason);
         return tr;
     };
 
@@ -2136,13 +2257,13 @@ function checkEntitiesInStr(str) {
         ">": "&gt;",
         '"': "&quot;",
         "'": "&#39;",
-        "(": "&#40;",
-        ")": "&#41;"
+        "\\(": "&#40;",
+        "\\)": "&#41;"
     };
 
-    var m = str.match(/([&<>"'\(\)])/);
+    var m = str.match(/([&<>"'])|(\\\()|(\\\))/);
     if (m && m[1] in entities) {
-        return { src: m[1], replace: entities[m[1]] };
+        return { src: m[1].replace(/^\\/, ""), replace: entities[m[1]] };
     } else {
         return false;
     }
@@ -2199,8 +2320,7 @@ function formatCSChatFilterList() {
                 .appendTo(wrap);
             var addTextbox = function (placeholder) {
                 var div = $("<div/>").addClass("form-group").appendTo(form)
-                    .css("margin-right", "10px")
-                    .css("max-width", "25%");
+                    .css("margin-right", "10px");
                 var input = $("<input/>").addClass("form-control")
                     .attr("type", "text")
                     .attr("placeholder", placeholder)
@@ -2235,14 +2355,11 @@ function formatCSChatFilterList() {
                 f.flags = flags.val();
                 f.replace = replace.val();
                 f.filterlinks = filterlinks.prop("checked");
-                try {
-                    new RegExp(f.source, f.flags);
-                } catch (e) {
-                    alert("Invalid regex: " + e);
-                }
 
                 socket.emit("updateFilter", f);
-                reset();
+                socket.once("updateFilterSuccess", function () {
+                    reset();
+                });
             });
 
             control.data("editor", tr2);
@@ -2307,7 +2424,7 @@ function formatCSEmoteList() {
             };
 
             edit.blur(finish);
-            edit.keyup(function (ev) {
+            edit.keydown(function (ev) {
                 if (ev.keyCode === 13) {
                     finish();
                 }
@@ -2458,7 +2575,7 @@ function initPm(user) {
     var input = $("<input/>").addClass("form-control pm-input").attr("type", "text")
         .appendTo(body);
 
-    input.keyup(function (ev) {
+    input.keydown(function (ev) {
         if (ev.keyCode === 13) {
             var meta = {};
             var msg = input.val();
@@ -2501,13 +2618,210 @@ function fallbackRaw(data) {
     $("video").each(function () {
         killVideoUntilItIsDead($(this));
     });
+    $("audio").each(function () {
+        killVideoUntilItIsDead($(this));
+    });
     data.type = "fl";
     data.url = data.direct.sd.url;
     PLAYER.player = undefined;
     PLAYER = new FlashPlayer(data);
-    if ($("#ytapiplayer").height() != VHEIGHT) {
-        resizeStuff();
-    }
 
     handleMediaUpdate(data);
+}
+
+function checkScriptAccess(source, type, cb) {
+    var pref = JSPREF[CHANNEL.name.toLowerCase() + "_" + type];
+    if (pref === "ALLOW") {
+        return cb("ALLOW");
+    } else if (pref !== "DENY") {
+        var div = $("#chanjs-allow-prompt");
+        if (div.length > 0) {
+            setTimeout(function () {
+                checkScriptAccess(source, type, cb);
+            }, 500);
+            return;
+        }
+
+        div = $("<div/>").attr("id", "chanjs-allow-prompt");
+        var close = $("<button/>").addClass("close pull-right")
+            .html("&times;")
+            .appendTo(div);
+        var form = $("<form/>")
+            .attr("action", "javascript:void(0)")
+            .attr("id", "chanjs-allow-prompt")
+            .attr("style", "text-align: center")
+            .appendTo(div);
+        form.append("<span>This channel has special features that require your permission to run.</span><br>");
+        $("<a/>").attr("href", source)
+            .attr("target", "_blank")
+            .text(type === "embedded" ? "view embedded script" : source)
+            .appendTo(form);
+        form.append("<div id='chanjs-allow-prompt-buttons'>" +
+                        "<button id='chanjs-allow' class='btn btn-xs btn-danger'>Allow</button>" +
+                        "<button id='chanjs-deny' class='btn btn-xs btn-danger'>Deny</button>" +
+                    "</div>");
+        form.append("<div class='checkbox'><label><input type='checkbox' " +
+                    "id='chanjs-save-pref'/>Remember my choice for this channel" +
+                    "</label></div>");
+        var dialog = chatDialog(div);
+
+        close.click(function () {
+            dialog.remove();
+            /* Implicit denial of script access */
+            cb("DENY");
+        });
+
+        $("#chanjs-allow").click(function () {
+            var save = $("#chanjs-save-pref").is(":checked");
+            dialog.remove();
+            if (save) {
+                JSPREF[CHANNEL.name.toLowerCase() + "_" + type] = "ALLOW";
+                setOpt("channel_js_pref", JSPREF);
+            }
+            cb("ALLOW");
+        });
+
+        $("#chanjs-deny").click(function () {
+            var save = $("#chanjs-save-pref").is(":checked");
+            dialog.remove();
+            if (save) {
+                JSPREF[CHANNEL.name.toLowerCase() + "_" + type] = "DENY";
+                setOpt("channel_js_pref", JSPREF);
+            }
+            cb("DENY");
+        });
+    }
+}
+
+function formatScriptAccessPrefs() {
+    var tbl = $("#us-scriptcontrol table");
+    tbl.find("tbody").remove();
+
+    var channels = Object.keys(JSPREF).sort();
+    channels.forEach(function (channel) {
+        var parts = channel.split("_");
+        if (!parts[1].match(/^(external|embedded)$/)) {
+            return;
+        }
+
+        var pref = JSPREF[channel];
+        var tr = $("<tr/>").appendTo(tbl);
+        $("<td/>").text(parts[0]).appendTo(tr);
+        $("<td/>").text(parts[1]).appendTo(tr);
+
+        var pref_td = $("<td/>").appendTo(tr);
+        var allow_label = $("<label/>").addClass("radio-inline")
+            .text("Allow").appendTo(pref_td);
+        var allow = $("<input/>").attr("type", "radio")
+            .prop("checked", pref === "ALLOW").
+            prependTo(allow_label);
+        allow.change(function () {
+            if (allow.is(":checked")) {
+                JSPREF[channel] = "ALLOW";
+                setOpt("channel_js_pref", JSPREF);
+                deny.prop("checked", false);
+            }
+        });
+
+        var deny_label = $("<label/>").addClass("radio-inline")
+            .text("Deny").appendTo(pref_td);
+        var deny = $("<input/>").attr("type", "radio")
+            .prop("checked", pref === "DENY").
+            prependTo(deny_label);
+        deny.change(function () {
+            if (deny.is(":checked")) {
+                JSPREF[channel] = "DENY";
+                setOpt("channel_js_pref", JSPREF);
+                allow.prop("checked", false);
+            }
+        });
+
+        var clearpref = $("<button/>").addClass("btn btn-sm btn-danger")
+            .text("Clear Preference")
+            .appendTo($("<td/>").appendTo(tr))
+            .click(function () {
+                delete JSPREF[channel];
+                setOpt("channel_js_pref", JSPREF);
+                tr.remove();
+            });
+    });
+}
+
+/*
+    VIMEO SIMULATOR 2014
+
+    Vimeo decided to block my domain.  After repeated emails, they refused to
+    unblock it.  Rather than give in to their demands, there is a serverside
+    option which extracts direct links to the h264 encoded MP4 video files.
+    These files can be loaded in a custom player to allow Vimeo playback without
+    triggering their dumb API domain block.
+
+    It's a little bit hacky, but my only other option is to keep buying new
+    domains every time one gets blocked.  No thanks to Vimeo, who were of no help
+    and unwilling to compromise on the issue.
+*/
+function vimeoSimulator2014(data) {
+    /* Vimeo Simulator uses the raw file player */
+    data.type = "fi";
+
+    /* Convert youtube-style quality key to vimeo workaround quality */
+    var q = {
+        small: "mobile",
+        medium: "sd",
+        large: "sd",
+        hd720: "hd",
+        hd1080:"hd",
+        highres: "hd"
+    }[USEROPTS.default_quality] || "sd";
+
+    var fallback = {
+        hd: "sd",
+        sd: "mobile",
+        mobile: false
+    };
+
+    /* Pick highest quality less than or equal to user's preference from the options */
+    while (!(q in data.meta.direct) && q != false) {
+        q = fallback[q];
+    }
+    if (!q) {
+        q = "sd";
+    }
+
+    data.url = data.meta.direct[q].url;
+    return data;
+}
+
+function googlePlusSimulator2014(data) {
+    /* Google+ Simulator uses the raw file player */
+    data.type = "fi";
+
+    if (!data.meta.gpdirect) {
+        data.url = "";
+        return data;
+    }
+
+    /* Convert youtube-style quality key to vimeo workaround quality */
+    var q = USEROPTS.default_quality || "auto";
+
+    var fallbacks = ["hd1080", "hd720", "large", "medium", "small"];
+    var i = fallbacks.indexOf(q);
+    if (i < 0) {
+        i = fallbacks.indexOf("medium");
+    }
+
+    while (!(q in data.meta.gpdirect) && i < fallbacks.length) {
+        q = fallbacks[i++];
+    }
+
+    if (i === fallbacks.length) {
+        var hasCodecs = Object.keys(data.meta.gpdirect);
+        if (hasCodecs.length > 0) {
+            q = hasCodecs[0];
+        }
+    }
+
+    data.url = data.meta.gpdirect[q].url;
+    data.contentType = data.meta.gpdirect[q].contentType;
+    return data;
 }

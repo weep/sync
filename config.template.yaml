@@ -5,6 +5,7 @@
 # password: password for user
 mysql:
   server: 'localhost'
+  port: 3306
   database: 'cytube3'
   user: 'cytube3'
   password: ''
@@ -15,10 +16,9 @@ mysql:
 # service on that port.  http/io and https/io can be combined, but if http and https
 # are both specified, only https will be bound to that port.
 #
-# NOTE: You can technically bind an IPv6 address this way, but much of the code has not
-# yet been updated to work with IPv6 addresses (ban ranges, IP masking, etc.)
-# IPv6 support is planned, and the below method of binding servers is one step in that
-# direction
+# If you don't specify a url, the url io.domain:port or https.domain:port will be assumed
+# for non-ssl and ssl websockets, respectively.  You can override this by specifying the
+# url for a websocket listener.
 listen:
 # Default HTTP server - default interface, port 8080
   - ip: ''
@@ -39,6 +39,7 @@ listen:
 #    port: 8081
 #    http: true
 #    io: true
+#    url: 'http://my-other-thing.site.com:8081'
 
 # HTTP server details
 http:
@@ -56,8 +57,13 @@ http:
     - '127.0.0.1'
   # Use express-minify to minify CSS and Javascript
   minify: false
-  # Static content cache (in seconds)
-  cache-ttl: 0
+  # Max-Age for caching.  Value should be an integer in milliseconds or a string accepted by
+  # the `ms` module.  Set to 0 to disable caching.
+  max-age: '7d'
+  # Set to false to disable gzip compression
+  gzip: true
+  # Customize the threshold byte size for applying gzip
+  gzip-threshold: 1024
 
 # HTTPS server details
 https:
@@ -97,13 +103,13 @@ io:
 # see https://github.com/andris9/Nodemailer
 mail:
   enabled: false
-  transport: 'SMTP'
   config:
     service: 'Gmail'
     auth:
       user: 'some.user@gmail.com'
       pass: 'supersecretpassword'
   from-address: 'some.user@gmail.com'
+  from-name: 'CyTube Services'
 
 # GData API v2 developer key (for non-anonymous youtube requests)
 youtube-v2-key: ''
@@ -115,8 +121,6 @@ max-channels-per-user: 5
 max-accounts-per-ip: 5
 # Minimum number of seconds between guest logins from the same IP
 guest-login-delay: 60
-# Block known Tor IP addresses
-enable-tor-blocker: true
 
 # Configure statistics tracking
 stats:
@@ -167,7 +171,24 @@ contacts:
     title: 'Developer'
     email: 'cyzon@cytu.be'
 
+playlist:
+  max-items: 4000
+  # How often (in seconds), mediaUpdate packets are broadcast to clients
+  update-interval: 5
+
 # If set to true, when the ipThrottle and lastguestlogin rate limiters are cleared
 # periodically, the garbage collector will be invoked immediately.
 # The server must be invoked with node --expose-gc index.js for this to have any effect.
 aggressive-gc: false
+
+# Allows you to blacklist certain channels.  Users will be automatically kicked
+# upon trying to join one.
+channel-blacklist: []
+
+# If you have ffmpeg installed, you can query metadata from raw files, allowing
+# server-synched raw file playback.  This requires the following:
+#   * ffmpeg must be installed on the server
+ffmpeg:
+  enabled: false
+
+link-domain-blacklist: []

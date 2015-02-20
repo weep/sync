@@ -1,14 +1,3 @@
-/*
-The MIT License (MIT)
-Copyright (c) 2013 Calvin Montgomery
- 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
- 
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
- 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
-
 var CL_VERSION = 3.0;
 
 var CLIENT = {
@@ -30,7 +19,6 @@ var CHANNEL = {
     css: "",
     js: "",
     motd: "",
-    motd_text: "",
     name: false,
     usercount: 0,
     emotes: []
@@ -76,10 +64,15 @@ var FILTER_TO = 0;
 var NO_STORAGE = typeof localStorage == "undefined" || localStorage === null;
 
 function getOpt(k) {
-    return NO_STORAGE ? readCookie(k) : localStorage.getItem(k);
+    var v = NO_STORAGE ? readCookie(k) : localStorage.getItem(k);
+    try {
+        v = JSON.parse(v);
+    } catch (e) { }
+    return v;
 }
 
 function setOpt(k, v) {
+    v = JSON.stringify(v);
     NO_STORAGE ? createCookie(k, v, 1000) : localStorage.setItem(k, v);
 }
 
@@ -91,24 +84,11 @@ function getOrDefault(k, def) {
         return true;
     if(v === "false")
         return false;
-    if(v.match(/^[0-9]+$/))
+    if(v.match && v.match(/^[0-9]+$/))
         return parseInt(v);
-    if(v.match(/^[0-9\.]+$/))
+    if(v.match && v.match(/^[0-9\.]+$/))
         return parseFloat(v);
     return v;
-}
-
-function default_noh264() {
-    var ua = navigator.userAgent + "";
-    if (ua.match(/Chrome|Chromium/)) {
-        return false;
-    } else if (ua.match(/Firefox/)) {
-        var version = ua.match(/Firefox\/(\d+)/)[1];
-        version = parseInt(version);
-        return version >= 29;
-    } else {
-        return true;
-    }
 }
 
 var USEROPTS = {
@@ -118,7 +98,7 @@ var USEROPTS = {
     hidevid              : getOrDefault("hidevid", false),
     show_timestamps      : getOrDefault("show_timestamps", true),
     modhat               : getOrDefault("modhat", false),
-    blink_title          : getOrDefault("blink_title", false),
+    blink_title          : getOrDefault("blink_title", "onlyping"),
     sync_accuracy        : getOrDefault("sync_accuracy", 2),
     wmode_transparent    : getOrDefault("wmode_transparent", true),
     chatbtn              : getOrDefault("chatbtn", false),
@@ -132,16 +112,37 @@ var USEROPTS = {
     sort_rank            : getOrDefault("sort_rank", true),
     sort_afk             : getOrDefault("sort_afk", false),
     default_quality      : getOrDefault("default_quality", ""),
-    boop                 : getOrDefault("boop", false),
+    boop                 : getOrDefault("boop", "never"),
     secure_connection    : getOrDefault("secure_connection", false),
-    no_h264              : getOrDefault("no_h264", default_noh264()),
     show_shadowchat      : getOrDefault("show_shadowchat", false)
 };
+
+/* Backwards compatibility check */
+if (USEROPTS.blink_title === true) {
+    USEROPTS.blink_title = "always";
+} else if (USEROPTS.blink_title === false) {
+    USEROPTS.blink_title = "onlyping";
+}
+/* Last ditch */
+if (["never", "onlyping", "always"].indexOf(USEROPTS.blink_title) === -1) {
+    USEROPTS.blink_title = "onlyping";
+}
+
+if (USEROPTS.boop === true) {
+    USEROPTS.boop = "onlyping";
+} else if (USEROPTS.boop === false) {
+    USEROPTS.boop = "never";
+}
+if (["never", "onlyping", "always"].indexOf(USEROPTS.boop) === -1) {
+    USEROPTS.boop = "onlyping";
+}
 
 var VOLUME = parseFloat(getOrDefault("volume", 1));
 
 var NO_WEBSOCKETS = USEROPTS.altsocket;
 var NO_VIMEO = Boolean(location.host.match("cytu.be"));
+
+var JSPREF = getOpt("channel_js_pref") || {};
 
 var Rank = {
     Guest: 0,

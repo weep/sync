@@ -1,14 +1,3 @@
-/*
-The MIT License (MIT)
-Copyright (c) 2013 Calvin Montgomery
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
-
 Callbacks = {
 
     error: function (reason) {
@@ -132,7 +121,7 @@ Callbacks = {
         $("#needpw").remove();
     },
 
-    chatCooldown: function (time) {
+    cooldown: function (time) {
         time = time + 200;
         $("#chatline").css("color", "#ff0000");
         if (CHATTHROTTLE && $("#chatline").data("throttle_timer")) {
@@ -186,24 +175,19 @@ Callbacks = {
         }
     },
 
-    setMotd: function(data) {
-        CHANNEL.motd = data.html;
-        CHANNEL.motd_text = data.motd;
-        if ($("#motdwrap").find(".motdeditor").length > 0) {
-            $("#motdwrap .motdeditor").val(CHANNEL.motd_text);
-        } else {
-            $("#motd").html(CHANNEL.motd);
-        }
-        $("#motdtext").val(CHANNEL.motd_text);
-        if(data.motd != "") {
+    setMotd: function(motd) {
+        CHANNEL.motd = motd;
+        $("#motd").html(motd);
+        $("#cs-motdtext").val(motd);
+        if (motd != "") {
             $("#motdwrap").show();
             $("#motd").show();
             $("#togglemotd").find(".glyphicon-plus")
                 .removeClass("glyphicon-plus")
                 .addClass("glyphicon-minus");
-        }
-        else
+        } else {
             $("#motdwrap").hide();
+        }
     },
 
     chatFilters: function(entries) {
@@ -253,18 +237,28 @@ Callbacks = {
     channelOpts: function(opts) {
         document.title = opts.pagetitle;
         PAGETITLE = opts.pagetitle;
-        $("#chanexternalcss").remove();
-        if(opts.externalcss.trim() != "" && !USEROPTS.ignore_channelcss) {
-            $("<link/>")
-                .attr("rel", "stylesheet")
-                .attr("href", opts.externalcss)
-                .attr("id", "chanexternalcss")
-                .appendTo($("head"));
-        }
-        if(opts.externaljs.trim() != "" && !USEROPTS.ignore_channeljs) {
-            if(opts.externaljs != CHANNEL.opts.externaljs) {
-                $.getScript(opts.externaljs);
+
+        if (!USEROPTS.ignore_channelcss &&
+            opts.externalcss !== CHANNEL.opts.externalcss) {
+            $("#chanexternalcss").remove();
+
+            if (opts.externalcss.trim() !== "") {
+                $("#chanexternalcss").remove();
+                $("<link/>")
+                    .attr("rel", "stylesheet")
+                    .attr("href", opts.externalcss)
+                    .attr("id", "chanexternalcss")
+                    .appendTo($("head"));
             }
+        }
+
+        if(opts.externaljs.trim() != "" && !USEROPTS.ignore_channeljs &&
+           opts.externaljs !== CHANNEL.opts.externaljs) {
+            checkScriptAccess(opts.externaljs, "external", function (pref) {
+                if (pref === "ALLOW") {
+                    $.getScript(opts.externaljs);
+                }
+            });
         }
 
         CHANNEL.opts = opts;
@@ -298,10 +292,26 @@ Callbacks = {
         $("#jstext").val(data.js);
 
         if(data.js && !USEROPTS.ignore_channeljs) {
-            $("<script/>").attr("type", "text/javascript")
-                .attr("id", "chanjs")
-                .text(data.js)
-                .appendTo($("body"));
+            var src = data.js
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/\n/g, "<br>")
+                .replace(/\t/g, "    ")
+                .replace(/ /g, "&nbsp;");
+            src = encodeURIComponent(src);
+
+            var viewsource = "data:text/html, <body style='font: 9pt monospace;" +
+                             "max-width:60rem;margin:0 auto;padding:4rem;'>" +
+                             src + "</body>";
+            checkScriptAccess(viewsource, "embedded", function (pref) {
+                if (pref === "ALLOW") {
+                    $("<script/>").attr("type", "text/javascript")
+                        .attr("id", "chanjs")
+                        .text(data.js)
+                        .appendTo($("body"));
+                }
+            });
         }
     },
 
@@ -360,9 +370,13 @@ Callbacks = {
     },
 
     channelRankFail: function (data) {
-        makeAlert("Error", data.msg, "alert-danger")
-            .removeClass().addClass("vertical-spacer")
-            .insertAfter($("#cs-chanranks form"));
+        if ($("#cs-chanranks").is(":visible")) {
+            makeAlert("Error", data.msg, "alert-danger")
+                .removeClass().addClass("vertical-spacer")
+                .insertAfter($("#cs-chanranks form"));
+        } else {
+            Callbacks.noflood({ action: "/rank", msg: data.msg });
+        }
     },
 
     readChanLog: function (data) {
@@ -392,9 +406,6 @@ Callbacks = {
     /* REGION Rank Stuff */
 
     rank: function(r) {
-        if (r >= 1) {
-            socket.emit("listPlaylists");
-        }
         if(r >= 255)
             SUPERADMIN = true;
         CLIENT.rank = r;
@@ -488,6 +499,8 @@ Callbacks = {
 
         if (data.username === CLIENT.name) {
             name = data.to;
+        } else {
+            pingMessage(true);
         }
         var pm = initPm(name);
         var msg = formatChatMessage(data, pm.data("last"));
@@ -807,8 +820,13 @@ Callbacks = {
     },
 
     changeMedia: function(data) {
-        if ($("body").hasClass("chatOnly")) {
+        if ($("body").hasClass("chatOnly") || $("#videowrap").length === 0) {
             return;
+        }
+
+        /* Failsafe */
+        if (isNaN(VOLUME) || VOLUME > 1 || VOLUME < 0) {
+            VOLUME = 1;
         }
 
         var shouldResize = $("#ytapiplayer").html() === "";
@@ -816,70 +834,58 @@ Callbacks = {
         if (PLAYER && typeof PLAYER.getVolume === "function") {
             PLAYER.getVolume(function (v) {
                 if (typeof v === "number") {
-                    VOLUME = v;
-                    setOpt("volume", VOLUME);
+                    if (v < 0 || v > 1) {
+                        alert("Something went wrong with retrieving the volume.  " +
+                            "Please tell calzoneman the following: " +
+                            JSON.stringify({ v: v, t: PLAYER.type, i: PLAYER.videoId }));
+                    } else {
+                        VOLUME = v;
+                        setOpt("volume", VOLUME);
+                    }
                 }
             });
         }
 
-        if(CHANNEL.opts.allow_voteskip)
+        if (CHANNEL.opts.allow_voteskip)
             $("#voteskip").attr("disabled", false);
 
         $("#currenttitle").text("Currently Playing: " + data.title);
 
-        if(data.type != "sc" && PLAYER.type == "sc")
+        if (data.type != "sc" && PLAYER.type == "sc")
             // [](/goddamnitmango)
             fixSoundcloudShit();
 
-        if(data.type != "jw" && PLAYER.type == "jw") {
+        if (data.type != "jw" && PLAYER.type == "jw") {
             // Is it so hard to not mess up my DOM?
             $("<div/>").attr("id", "ytapiplayer")
                 .insertBefore($("#ytapiplayer_wrapper"));
             $("#ytapiplayer_wrapper").remove();
         }
 
-        /*
-            VIMEO SIMULATOR 2014
-
-            Vimeo decided to block my domain.  After repeated emails, they refused to
-            unblock it.  Rather than give in to their demands, there is a serverside
-            option which extracts direct links to the h264 encoded MP4 video files.
-            These files can be loaded in a custom player to allow Vimeo playback without
-            triggering their dumb API domain block.
-
-            It's a little bit hacky, but my only other option is to keep buying new
-            domains every time one gets blocked.  No thanks to Vimeo, who were of no help
-            and unwilling to compromise on the issue.
-        */
-        if (NO_VIMEO && data.type === "vi" && data.direct && data.direct.sd) {
-            // For browsers that don't support native h264 playback
-            if (USEROPTS.no_h264) {
-                data.type = "fl";
-            } else {
-                data.type = "rv";
-            }
-            // Right now only plays standard definition.
-            // In the future, I may add a quality selector for mobile/standard/HD
-            data.url = data.direct.sd.url;
-        }
-
-        if (data.type === "rt") {
+        if (data.type === "fi") {
             data.url = data.id;
         }
 
-        if(data.type != PLAYER.type) {
-            loadMediaPlayer(data);
+        if (NO_VIMEO && data.type === "vi" && data.meta.direct) {
+            data = vimeoSimulator2014(data);
         }
 
-        if ($("#ytapiplayer").height() != VHEIGHT) {
-            resizeStuff();
+        /*
+         * Google Docs now uses the same simulator as Google+
+         */
+        if (data.type === "gp" || data.type === "gd") {
+            data = googlePlusSimulator2014(data);
+        }
+
+        if (data.type != PLAYER.type) {
+            loadMediaPlayer(data);
         }
 
         handleMediaUpdate(data);
     },
 
     mediaUpdate: function(data) {
-        if ($("body").hasClass("chatOnly")) {
+        if ($("body").hasClass("chatOnly") || $("#videowrap").length === 0) {
             return;
         }
 
@@ -1054,6 +1060,28 @@ Callbacks = {
             row.hide("fade", row.remove.bind(row));
             CHANNEL.emotes.splice(i, 1);
         }
+    },
+
+    warnLargeChandump: function (data) {
+        function toHumanReadable(size) {
+            if (size > 1048576) {
+                return Math.floor((size / 1048576) * 100) / 100 + "MiB";
+            } else if (size > 1024) {
+                return Math.floor((size / 1024) * 100) / 100 + "KiB";
+            } else {
+                return size + "B";
+            }
+        }
+
+        if ($("#chandumptoobig").length > 0) {
+            $("#chandumptoobig").remove();
+        }
+
+        errDialog("This channel currently exceeds the maximum size of " +
+            toHumanReadable(data.limit) + " (channel size is " +
+            toHumanReadable(data.actual) + ").  Please reduce the size by removing " +
+            "unneeded playlist items, filters, and/or emotes or else the channel will " +
+            "be unable to load the next time it is reloaded").attr("id", "chandumptoobig");
     }
 }
 
@@ -1061,12 +1089,18 @@ var SOCKET_DEBUG = false;
 setupCallbacks = function() {
     for(var key in Callbacks) {
         (function(key) {
-        socket.on(key, function(data) {
-            if (SOCKET_DEBUG) {
-                console.log(key, data);
-            }
-            Callbacks[key](data);
-        });
+            socket.on(key, function(data) {
+                if (SOCKET_DEBUG) {
+                    console.log(key, data);
+                }
+                try {
+                    Callbacks[key](data);
+                } catch (e) {
+                    if (SOCKET_DEBUG) {
+                        console.log("EXCEPTION: " + e.stack);
+                    }
+                }
+            });
         })(key);
     }
 }
@@ -1081,17 +1115,12 @@ try {
         throw false;
     }
 
-    if (NO_WEBSOCKETS || USEROPTS.altsocket) {
-        var i = io.transports.indexOf("websocket");
-        if (i >= 0) {
-            io.transports.splice(i, 1);
-        }
+    var opts = { transports: ["websocket", "polling"] };
+    if (IO_URL === IO_URLS["ipv4-ssl"] || IO_URL === IO_URLS["ipv6-ssl"]) {
+        opts.secure = true;
+        socket = io(IO_URL, { secure: true });
     }
-    if (ALLOW_SSL && (location.protocol === "https:" || USEROPTS.secure_connection)) {
-        socket = io.connect(IO_URL, { secure: true });
-    } else {
-        socket = io.connect(IO_URL);
-    }
+    socket = io(IO_URL, opts);
     setupCallbacks();
 } catch (e) {
     if (e) {
