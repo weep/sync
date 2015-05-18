@@ -1311,7 +1311,8 @@ function parseMediaLink(url) {
         };
     }
 
-    if ((m = url.match(/(?:docs|drive)\.google\.com\/file\/d\/([^\/]*)/))) {
+    if ((m = url.match(/(?:docs|drive)\.google\.com\/file\/d\/([^\/]*)/)) ||
+        (m = url.match(/drive\.google\.com\/open\?id=([^&]*)/))) {
         return {
             id: m[1],
             type: "gd"
@@ -1731,7 +1732,7 @@ function handleVideoResize() {
 $(window).resize(handleWindowResize);
 handleWindowResize();
 
-function removeVideo() {
+function removeVideo(event) {
     try {
         PLAYER.setVolume(0);
         if (PLAYER.type === "rv") {
@@ -1742,6 +1743,7 @@ function removeVideo() {
 
     $("#videowrap").remove();
     $("#chatwrap").removeClass("col-lg-5 col-md-5").addClass("col-md-12");
+    if (event) event.preventDefault();
 }
 
 /* channel administration stuff */
@@ -2020,7 +2022,7 @@ function queueMessage(data, type) {
                 data.link + "</a>";
     }
     makeAlert(title, text, type)
-        .addClass("qfalert qf-" + type)
+        .addClass("linewrap qfalert qf-" + type)
         .appendTo($("#queuefail"));
 }
 
@@ -2515,6 +2517,11 @@ function formatUserPlaylistList() {
             .attr("title", "Delete playlist")
             .appendTo(btns)
             .click(function () {
+                var really = confirm("Are you sure you want to delete" +
+                    " this playlist? This cannot be undone.");
+                if (!really) {
+                    return;
+                }
                 socket.emit("deletePlaylist", {
                     name: pl.name
                 });
@@ -2582,10 +2589,14 @@ function initPm(user) {
     var buffer = $("<div/>").addClass("pm-buffer linewrap").appendTo(body);
     $("<hr/>").appendTo(body);
     var input = $("<input/>").addClass("form-control pm-input").attr("type", "text")
+        .attr("maxlength", 240)
         .appendTo(body);
 
     input.keydown(function (ev) {
         if (ev.keyCode === 13) {
+            if (CHATTHROTTLE) {
+                return;
+            }
             var meta = {};
             var msg = input.val();
             if (msg.trim() === "") {
@@ -2812,6 +2823,9 @@ function googlePlusSimulator2014(data) {
 
     /* Convert youtube-style quality key to vimeo workaround quality */
     var q = USEROPTS.default_quality || "auto";
+    if (q === "highres") {
+        q = "hd1080";
+    }
 
     var fallbacks = ["hd1080", "hd720", "large", "medium", "small"];
     var i = fallbacks.indexOf(q);
