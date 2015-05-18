@@ -733,9 +733,7 @@ function applyOpts() {
     }
 
     if(USEROPTS.hidevid) {
-        $("#qualitywrap").html("");
         removeVideo();
-        $("#chatwrap").removeClass("col-lg-5 col-md-5").addClass("col-lg-12 col-md-12");
     }
 
     $("#chatbtn").remove();
@@ -1690,7 +1688,14 @@ function chatOnly() {
         .click(function () {
             $("#channeloptions").modal();
         });
+    $("<span/>").addClass("label label-default pull-right pointer")
+        .text("Emote List")
+        .appendTo($("#chatheader"))
+        .click(function () {
+            EMOTELIST.show();
+        });
     setVisible("#showchansettings", CLIENT.rank >= 2);
+
     $("body").addClass("chatOnly");
     handleWindowResize();
 }
@@ -1713,7 +1718,7 @@ function handleVideoResize() {
     var intv, ticks = 0;
     var resize = function () {
         if (++ticks > 10) clearInterval(intv);
-        if ($("#ytapiplayer").parent().height() === 0) return;
+        if ($("#ytapiplayer").parent().outerHeight() <= 0) return;
         clearInterval(intv);
 
         var responsiveFrame = $("#ytapiplayer").parent();
@@ -2848,3 +2853,106 @@ function googlePlusSimulator2014(data) {
     data.contentType = data.meta.gpdirect[q].contentType;
     return data;
 }
+
+function EmoteList() {
+    this.modal = $("#emotelist");
+    this.modal.on("hiddn.bs.modal", unhidePlayer);
+    this.table = document.querySelector("#emotelist table");
+    this.cols = 5;
+    this.itemsPerPage = 25;
+    this.emotes = [];
+    this.emoteListChanged = true;
+    this.page = 0;
+}
+
+EmoteList.prototype.handleChange = function () {
+    this.emotes = CHANNEL.emotes.slice();
+    if (USEROPTS.emotelist_sort) {
+        this.emotes.sort(function (a, b) {
+            var x = a.name.toLowerCase();
+            var y = b.name.toLowerCase();
+
+            if (x < y) {
+                return -1;
+            } else if (x > y) {
+                return 1;
+            } else {
+                return 0;
+            }
+        });
+    }
+
+    if (this.filter) {
+        this.emotes = this.emotes.filter(this.filter);
+    }
+
+    this.paginator = new NewPaginator(this.emotes.length, this.itemsPerPage,
+            this.loadPage.bind(this));
+    var container = document.getElementById("emotelist-paginator-container");
+    container.innerHTML = "";
+    container.appendChild(this.paginator.elem);
+    this.paginator.loadPage(this.page);
+    this.emoteListChanged = false;
+};
+
+EmoteList.prototype.show = function () {
+    if (this.emoteListChanged) {
+        this.handleChange();
+    }
+
+    this.modal.modal();
+};
+
+EmoteList.prototype.loadPage = function (page) {
+    var tbody = this.table.children[0];
+    tbody.innerHTML = "";
+
+    var row;
+    var start = page * this.itemsPerPage;
+    if (start >= this.emotes.length) return;
+    var end = Math.min(start + this.itemsPerPage, this.emotes.length);
+    var _this = this;
+
+    for (var i = start; i < end; i++) {
+        if ((i - start) % this.cols === 0) {
+            row = document.createElement("tr");
+            tbody.appendChild(row);
+        }
+
+        (function (emote) {
+            var td = document.createElement("td");
+            td.className = "emote-preview-container";
+
+            // Trick element to vertically align the emote within the container
+            var hax = document.createElement("span");
+            hax.className = "emote-preview-hax";
+            td.appendChild(hax);
+
+            var img = document.createElement("img");
+            img.src = emote.image;
+            img.className = "emote-preview";
+            img.title = emote.name;
+            img.onclick = function () {
+                var val = chatline.value;
+                if (!val) {
+                    chatline.value = emote.name;
+                } else {
+                    if (!val.charAt(val.length - 1).match(/\s/)) {
+                        chatline.value += " ";
+                    }
+                    chatline.value += emote.name;
+                }
+
+                _this.modal.modal("hide");
+                chatline.focus();
+            };
+
+            td.appendChild(img);
+            row.appendChild(td);
+        })(this.emotes[i]);
+    }
+
+    this.page = page;
+};
+
+window.EMOTELIST = new EmoteList();
