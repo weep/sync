@@ -4,6 +4,7 @@ html(lang="en")
     include head
     mixin head()
     link(href="//code.jquery.com/ui/1.10.3/themes/smoothness/jquery-ui.css", rel="stylesheet")
+    link(rel="stylesheet", href="/css/video-js.css")
   body
     #wrap
       nav.navbar.navbar-inverse.navbar-fixed-top(role="navigation")
@@ -14,7 +15,7 @@ html(lang="en")
           ul.nav.navbar-nav
             mixin navdefaultlinks(cname)
             li: a(href="javascript:void(0)", onclick="javascript:showUserOptions()") Options
-            li: a#showchansettings(href="javascript:void(0)", onclick="javascript:$('#channeloptions').modal()") Channel Settings
+            li: a#showchansettings(href="javascript:void(0)", onclick="javascript:showChannelSettings()") Channel Settings
             li.dropdown
               a.dropdown-toggle(href="#", data-toggle="dropdown") Layout
                 b.caret
@@ -55,7 +56,6 @@ html(lang="en")
           #controlsrow.row
             #leftcontrols.col-lg-5.col-md-5
               button#newpollbtn.btn.btn-sm.btn-default New Poll
-              | &nbsp;
               button#emotelistbtn.btn.btn-sm.btn-default Emote List
             #rightcontrols.col-lg-7.col-md-7
               #plcontrol.btn-group.pull-left
@@ -76,6 +76,8 @@ html(lang="en")
               #videocontrols.btn-group.pull-right
                 button#mediarefresh.btn.btn-sm.btn-default(title="Reload the video player")
                   span.glyphicon.glyphicon-retweet
+                button#fullscreenbtn.btn.btn-sm.btn-default(title="Make the video player fullscreen")
+                  span.glyphicon.glyphicon-fullscreen
                 button#getplaylist.btn.btn-sm.btn-default(title="Retrieve playlist links")
                   span.glyphicon.glyphicon-link
                 button#voteskip.btn.btn-sm.btn-default(title="Voteskip")
@@ -113,6 +115,7 @@ html(lang="en")
                     label
                       input.add-temp(type="checkbox")
                       | Add as temporary
+                  div#addfromurl-queue
                 #customembed.collapse.plcontrol-collapse.col-lg-12.col-md-12
                   .vertical-spacer
                   .input-group
@@ -126,7 +129,7 @@ html(lang="en")
                       input.add-temp(type="checkbox")
                       | Add as temporary
                   | Paste the embed code below and click Next or At End.
-                  | Acceptable embed codes are <code>&lt;iframe&gt;</code> and <code>&lt;object&gt;</code> tags.
+                  | Acceptable embed codes are <code>&lt;iframe&gt;</code> and <code>&lt;object&gt;</code> tags.  <strong>CUSTOM EMBEDS CANNOT BE SYNCHRONIZED.</strong>
                   textarea#customembed-content.input-block-level.form-control(rows="3")
                 #playlistmanager.collapse.plcontrol-collapse.col-lg-12.col-md-12
                   .vertical-spacer
@@ -243,8 +246,7 @@ html(lang="en")
     script(src="/js/ui.js")
     script(src="/js/callbacks.js")
     script(defer, src="https://www.youtube.com/iframe_api")
-    script(defer, src="//api.dmcdn.net/all.js")
-    script(defer, src="//jwpsrv.com/library/QouFCLBMEeKC+CIACpYGxA.js")
+    script(defer, src="https://api.dmcdn.net/all.js")
     script(defer, src="/js/sc.js")
     script(defer, src="/js/froogaloop.min.js")
-    script(defer, src="/js/swf.js")
+    script(defer, src="/js/video.js")

@@ -1220,7 +1220,7 @@ function parseMediaLink(url) {
     if(url.indexOf("jw:") == 0) {
         return {
             id: url.substring(3),
-            type: "jw"
+            type: "fi"
         };
     }
 
@@ -1377,10 +1377,10 @@ function sendVideoUpdate() {
     }
     PLAYER.getTime(function (seconds) {
         socket.emit("mediaUpdate", {
-            id: PLAYER.videoId,
+            id: PLAYER.mediaId,
             currentTime: seconds,
             paused: PLAYER.paused,
-            type: PLAYER.type
+            type: PLAYER.mediaType
         });
     });
 }
@@ -1492,10 +1492,7 @@ function addChatMessage(data) {
     div.mouseleave(function() {
         $(".nick-hover").removeClass("nick-hover");
     });
-    // Cap chatbox at most recent 100 messages
-    if($("#messagebuffer").children().length > 100) {
-        $($("#messagebuffer").children()[0]).remove();
-    }
+    trimChatBuffer();
     if(SCROLLCHAT)
         scrollChat();
 
@@ -1509,6 +1506,18 @@ function addChatMessage(data) {
 
     pingMessage(isHighlight);
 
+}
+
+function trimChatBuffer() {
+    var maxSize = window.CHATMAXSIZE;
+    if (!maxSize || typeof maxSize !== "number")
+        maxSize = parseInt(maxSize || 100, 10) || 100;
+    var buffer = document.getElementById("messagebuffer");
+    var count = buffer.childNodes.length - maxSize;
+
+    for (var i = 0; i < count; i++) {
+        buffer.firstChild.remove();
+    }
 }
 
 function pingMessage(isHighlight) {
@@ -1903,30 +1912,13 @@ function waitUntilDefined(obj, key, fn) {
 }
 
 function hidePlayer() {
-    if(!PLAYER)
-        return;
+    if (!PLAYER) return;
 
-    if(!/(chrome|MSIE)/ig.test(navigator.userAgent))
-        return;
-
-    PLAYER.size = {
-        width: $("#ytapiplayer").width(),
-        height: $("#ytapiplayer").height()
-    };
-
-    $("#ytapiplayer").attr("width", 1)
-        .attr("height", 1);
+    $("#ytapiplayer").hide();
 }
 
 function unhidePlayer() {
-    if(!PLAYER)
-        return;
-
-    if(!/(chrome|MSIE)/ig.test(navigator.userAgent))
-        return;
-
-    $("#ytapiplayer").width(PLAYER.size.width)
-        .height(PLAYER.size.height);
+    $("#ytapiplayer").show();
 }
 
 function chatDialog(div) {
@@ -2856,7 +2848,7 @@ function googlePlusSimulator2014(data) {
 
 function EmoteList() {
     this.modal = $("#emotelist");
-    this.modal.on("hiddn.bs.modal", unhidePlayer);
+    this.modal.on("hidden.bs.modal", unhidePlayer);
     this.table = document.querySelector("#emotelist table");
     this.cols = 5;
     this.itemsPerPage = 25;
@@ -2956,3 +2948,12 @@ EmoteList.prototype.loadPage = function (page) {
 };
 
 window.EMOTELIST = new EmoteList();
+
+function showChannelSettings() {
+    hidePlayer();
+    $("#channeloptions").on("hidden.bs.modal", function () {
+        unhidePlayer();
+    });
+
+    $("#channeloptions").modal();
+}
