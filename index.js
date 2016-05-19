@@ -1,6 +1,26 @@
-var Server = require("./lib/server");
+try {
+    var Server = require("./lib/server");
+} catch (err) {
+    console.error('FATAL: Failed to require() lib/server.js');
+    if (/module version mismatch/i.test(err.message)) {
+        console.error('Module version mismatch, try running `npm rebuild` or removing ' +
+                      'the node_modules folder and re-running `npm install`');
+    } else {
+        console.error('Possible causes:\n' +
+                      '  * You haven\'t run `npm run build-server` to regenerate ' +
+                      'the runtime\n' +
+                      '  * You\'ve upgraded node/npm and haven\'t rebuilt dependencies ' +
+                      '(try `npm rebuild` or `rm -rf node_modules && npm install`)\n' +
+                      '  * A dependency failed to install correctly (check the output ' +
+                      'of `npm install` next time)');
+    }
+    console.error(err.stack);
+    process.exit(1);
+}
 var Config = require("./lib/config");
 var Logger = require("./lib/logger");
+const Switches = require("./lib/switches");
+require("source-map-support").install();
 
 Config.load("config.yaml");
 var sv = Server.init();
@@ -42,5 +62,16 @@ function handleLine(line) {
                 Logger.syslog.log("Deleted old channel tables");
             }
         });
+    } else if (line.indexOf("/switch") === 0) {
+        var args = line.split(" ");
+        args.shift();
+        if (args.length === 1) {
+            Logger.syslog.log("Switch " + args[0] + " is " +
+                    (Switches.isActive(args[0]) ? "ON" : "OFF"));
+        } else if (args.length === 2) {
+            Switches.setActive(args[0], args[1].toLowerCase() === "on" ? true : false);
+            Logger.syslog.log("Switch " + args[0] + " is now " +
+                    (Switches.isActive(args[0]) ? "ON" : "OFF"));
+        }
     }
 }

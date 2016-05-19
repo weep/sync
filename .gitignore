@@ -10,3 +10,5 @@ node_modules
 *.key
 torlist
 www/cache
+google-drive-subtitles
+lib/

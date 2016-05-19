@@ -37,6 +37,7 @@ window.EmbedPlayer = class EmbedPlayer extends Player
         object = $('<object/>').attr(
             type: 'application/x-shockwave-flash'
             data: embed.src
+            wmode: 'opaque'
         )
         genParam('allowfullscreen', 'true').appendTo(object)
         genParam('allowscriptaccess', 'always').appendTo(object)
@@ -60,6 +61,7 @@ window.EmbedPlayer = class EmbedPlayer extends Player
             iframe = $('<iframe/>').attr(
                 src: embed.src
                 frameborder: '0'
+                allowfullscreen: '1'
             )
 
             return iframe

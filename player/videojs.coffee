@@ -5,11 +5,13 @@ sortSources = (sources) ->
 
     qualities = ['1080', '720', '480', '360', '240']
     pref = String(USEROPTS.default_quality)
+    if USEROPTS.default_quality == 'best'
+        pref = '1080'
     idx = qualities.indexOf(pref)
     if idx < 0
-        pref = '480'
+        idx = 2
 
-    qualityOrder = qualities.slice(idx).concat(qualities.slice(0, idx))
+    qualityOrder = qualities.slice(idx).concat(qualities.slice(0, idx).reverse())
     sourceOrder = []
     flvOrder = []
     for quality in qualityOrder
@@ -66,6 +68,20 @@ window.VideoJSPlayer = class VideoJSPlayer extends Player
                 ).appendTo(video)
             )
 
+            if data.meta.gdrive_subtitles
+                data.meta.gdrive_subtitles.available.forEach((subt) ->
+                    label = subt.lang_original
+                    if subt.name
+                        label += " (#{subt.name})"
+                    $('<track/>').attr(
+                        src: "/gdvtt/#{data.id}/#{subt.lang}/#{subt.name}.vtt?\
+                                vid=#{data.meta.gdrive_subtitles.vid}"
+                        kind: 'subtitles'
+                        srclang: subt.lang
+                        label: label
+                    ).appendTo(video)
+                )
+
             @player = videojs(video[0], autoplay: true, controls: true)
             @player.ready(=>
                 @setVolume(VOLUME)
@@ -91,6 +107,21 @@ window.VideoJSPlayer = class VideoJSPlayer extends Player
                 @player.on('seeked', =>
                     $('.vjs-waiting').removeClass('vjs-waiting')
                 )
+
+                # Workaround for Chrome-- it seems that the click bindings for
+                # the subtitle menu aren't quite set up until after the ready
+                # event finishes, so set a timeout for 1ms to force this code
+                # not to run until the ready() function returns.
+                setTimeout(->
+                    $('#ytapiplayer .vjs-subtitles-button .vjs-menu-item').each((i, elem) ->
+                        if elem.textContent == localStorage.lastSubtitle
+                            elem.click()
+
+                        elem.onclick = ->
+                            if elem.attributes['aria-selected'].value == 'true'
+                                localStorage.lastSubtitle = elem.textContent
+                    )
+                , 1)
             )
         )
 
@@ -100,6 +131,7 @@ window.VideoJSPlayer = class VideoJSPlayer extends Player
         # existing player object, however it appears to be pretty glitchy when
         # a video can't be played (either previous or next video).  It's safer
         # to just reset the entire thing.
+        @destroy()
         @loadPlayer(data)
 
     play: ->
@@ -134,3 +166,8 @@ window.VideoJSPlayer = class VideoJSPlayer extends Player
                 cb(@player.volume())
         else
             cb(VOLUME)
+
+    destroy: ->
+        removeOld()
+        if @player
+            @player.dispose()

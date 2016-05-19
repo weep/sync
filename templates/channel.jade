@@ -41,8 +41,7 @@ html(lang="en")
               #chatheader
                 i#userlisttoggle.glyphicon.glyphicon-chevron-down.pull-left.pointer(title="Show/Hide Userlist")
                 span#usercount.pointer Not Connected
-                span#modflair.label.label-default.pull-right.pointer M
-                span#adminflair.label.label-default.pull-right.pointer A
+                span#modflair.label.label-default.pull-right.pointer Name Color
               #userlist
               #messagebuffer.linewrap
               input#chatline.form-control(type="text", maxlength="240", style="display: none")
@@ -58,7 +57,7 @@ html(lang="en")
               button#newpollbtn.btn.btn-sm.btn-default New Poll
               button#emotelistbtn.btn.btn-sm.btn-default Emote List
             #rightcontrols.col-lg-7.col-md-7
-              #plcontrol.btn-group.pull-left
+              #plcontrol.btn-group
                 button#showsearch.btn.btn-sm.btn-default(title="Search for a video", data-toggle="collapse", data-target="#searchcontrol")
                   span.glyphicon.glyphicon-search
                 button#showmediaurl.btn.btn-sm.btn-default(title="Add video from URL", data-toggle="collapse", data-target="#addfromurl")
@@ -185,14 +184,14 @@ html(lang="en")
             h4 Emote List
           .modal-body
             .pull-left
-              input#emotelist-search.form-control(type="text", placeholder="Search")
+              input.emotelist-search.form-control(type="text", placeholder="Search")
             .pull-right
               .checkbox
                 label
-                  input#emotelist-alphabetical(type="checkbox")
+                  input.emotelist-alphabetical(type="checkbox")
                   | Sort alphabetically
-            #emotelist-paginator-container
-            table
+            .emotelist-paginator-container
+            table.emotelist-table
               tbody
           .modal-footer
     #channeloptions.modal.fade(tabindex="-1", role="dialog", aria-hidden="true")
@@ -239,7 +238,6 @@ html(lang="en")
     mixin footer()
     script(src=sioSource)
     script(src="/js/data.js")
-    script(src="/sioconfig")
     script(src="/js/util.js")
     script(src="/js/player.js")
     script(src="/js/paginator.js")

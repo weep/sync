@@ -521,6 +521,7 @@ Callbacks = {
 
     clearchat: function() {
         $("#messagebuffer").html("");
+        LASTCHAT.name = "";
     },
 
     userlist: function(data) {
@@ -1017,7 +1018,7 @@ Callbacks = {
         var tbl = $("#cs-emotes table");
         tbl.data("entries", data);
         formatCSEmoteList();
-        EMOTELIST.emoteListChanged = true;
+        EMOTELIST.handleChange();
     },
 
     updateEmote: function (data) {
@@ -1072,12 +1073,13 @@ Callbacks = {
         errDialog("This channel currently exceeds the maximum size of " +
             toHumanReadable(data.limit) + " (channel size is " +
             toHumanReadable(data.actual) + ").  Please reduce the size by removing " +
-            "unneeded playlist items, filters, and/or emotes or else the channel will " +
-            "be unable to load the next time it is reloaded").attr("id", "chandumptoobig");
+            "unneeded playlist items, filters, and/or emotes.  Changes to the channel " +
+            "will not be saved until the size is reduced to under the limit.")
+            .attr("id", "chandumptoobig");
     }
 }
 
-var SOCKET_DEBUG = false;
+var SOCKET_DEBUG = localStorage.getItem('cytube_socket_debug') === 'true';
 setupCallbacks = function() {
     for(var key in Callbacks) {
         (function(key) {
@@ -1095,27 +1097,67 @@ setupCallbacks = function() {
             });
         })(key);
     }
-}
+};
 
-try {
+(function () {
     if (typeof io === "undefined") {
-        makeAlert("Uh oh!", "It appears the connection to <code>" + IO_URL + "</code> " +
+        makeAlert("Uh oh!", "It appears the socket.io connection " +
                             "has failed.  If this error persists, a firewall or " +
                             "antivirus is likely blocking the connection, or the " +
                             "server is down.", "alert-danger")
             .appendTo($("#announcements"));
-        throw false;
+        Callbacks.disconnect();
+        return;
     }
 
-    var opts = { transports: ["websocket", "polling"] };
-    if (IO_URL === IO_URLS["ipv4-ssl"] || IO_URL === IO_URLS["ipv6-ssl"]) {
-        opts.secure = true;
-        socket = io(IO_URL, { secure: true });
-    }
-    socket = io(IO_URL, opts);
-    setupCallbacks();
-} catch (e) {
-    if (e) {
-        Callbacks.disconnect();
-    }
-}
+    $.getJSON("/socketconfig/" + CHANNEL.name + ".json")
+        .done(function (socketConfig) {
+            if (socketConfig.error) {
+                makeAlert("Error", "Socket.io configuration returned error: " +
+                        socketConfig.error, "alert-danger")
+                    .appendTo($("#announcements"));
+                return;
+            }
+
+            var servers;
+            if (socketConfig.alt && socketConfig.alt.length > 0 &&
+                    localStorage.useAltServer) {
+                servers = socketConfig.alt;
+                console.log("Using alt servers: " + JSON.stringify(servers));
+            } else {
+                servers = socketConfig.servers;
+            }
+
+            var chosenServer = null;
+            servers.forEach(function (server) {
+                if (chosenServer === null) {
+                    chosenServer = server;
+                } else if (server.secure && !chosenServer.secure) {
+                    chosenServer = server;
+                } else if (!server.ipv6Only && chosenServer.ipv6Only) {
+                    chosenServer = server;
+                }
+            });
+
+            console.log("Connecting to " + JSON.stringify(chosenServer));
+
+            if (chosenServer === null) {
+                makeAlert("Error",
+                        "Socket.io configuration was unable to find a suitable server",
+                        "alert-danger")
+                    .appendTo($("#announcements"));
+            }
+
+            var opts = {
+                secure: chosenServer.secure
+            };
+
+            socket = io(chosenServer.url, opts);
+            setupCallbacks();
+        }).fail(function () {
+            makeAlert("Error", "Failed to retrieve socket.io configuration",
+                    "alert-danger")
+                .appendTo($("#announcements"));
+            Callbacks.disconnect();
+        });
+})();

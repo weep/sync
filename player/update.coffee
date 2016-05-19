@@ -2,7 +2,7 @@ TYPE_MAP =
     yt: YouTubePlayer
     vi: VimeoPlayer
     dm: DailymotionPlayer
-    gd: VideoJSPlayer
+    gd: GoogleDriveYouTubePlayer
     gp: VideoJSPlayer
     fi: FilePlayer
     jw: FilePlayer
@@ -16,7 +16,13 @@ TYPE_MAP =
     im: ImgurPlayer
 
 window.loadMediaPlayer = (data) ->
-    if data.meta.direct
+    try
+        if window.PLAYER
+            window.PLAYER.destroy()
+    catch error
+        console.error error
+
+    if data.meta.direct and data.type != 'gd'
         try
             window.PLAYER = new VideoJSPlayer(data)
         catch e
@@ -96,7 +102,7 @@ window.handleMediaUpdate = (data) ->
     )
 
 window.removeOld = (replace) ->
-    $('#sc_volume').remove()
+    $('#soundcloud-volume-holder').remove()
     replace ?= $('<div/>').addClass('embed-responsive-item')
     old = $('#ytapiplayer')
     replace.insertBefore(old)

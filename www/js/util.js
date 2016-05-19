@@ -107,6 +107,15 @@ function formatUserlistItem(div) {
     }
 
     var profile = null;
+    /*
+     * 2015-10-19
+     * Prevent rendering unnecessary duplicates of the profile box when
+     * a user's status changes.
+     */
+    name.unbind("mouseenter");
+    name.unbind("mousemove");
+    name.unbind("mouseleave");
+
     name.mouseenter(function(ev) {
         if (profile)
             profile.remove();
@@ -615,23 +624,6 @@ function showUserOptions() {
     $("#us-layout").val(USEROPTS.layout);
     $("#us-no-channelcss").prop("checked", USEROPTS.ignore_channelcss);
     $("#us-no-channeljs").prop("checked", USEROPTS.ignore_channeljs);
-    var conninfo = "<strong>Connection Information: </strong>" +
-                   "Connected to <code>" + IO_URL + "</code> (";
-    if (IO_V6) {
-        conninfo += "IPv6, ";
-    } else {
-        conninfo += "IPv4, ";
-    }
-
-    if (IO_URL === IO_URLS["ipv4-ssl"] || IO_URL === IO_URLS["ipv6-ssl"]) {
-        conninfo += "SSL)";
-    } else {
-        conninfo += "no SSL)";
-    }
-
-    conninfo += ".  SSL is enabled by default if it is supported by the server.";
-    $("#us-conninfo").html(conninfo);
-
 
     $("#us-synch").prop("checked", USEROPTS.synch);
     $("#us-synch-accuracy").val(USEROPTS.sync_accuracy);
@@ -828,7 +820,13 @@ function showPollMenu() {
 }
 
 function scrollChat() {
-    $("#messagebuffer").scrollTop($("#messagebuffer").prop("scrollHeight"));
+    scrollAndIgnoreEvent($("#messagebuffer").prop("scrollHeight"));
+    $("#newmessages-indicator").remove();
+}
+
+function scrollAndIgnoreEvent(top) {
+    IGNORE_SCROLL_EVENT = true;
+    $("#messagebuffer").scrollTop(top);
 }
 
 function hasPermission(key) {
@@ -932,7 +930,6 @@ function handlePermissionChange() {
     setVisible("#showchansettings", CLIENT.rank >= 2);
     setVisible("#playlistmanagerwrap", CLIENT.rank >= 1);
     setVisible("#modflair", CLIENT.rank >= 2);
-    setVisible("#adminflair", CLIENT.rank >= 255);
     setVisible("#guestlogin", CLIENT.rank < 0);
     setVisible("#chatline", CLIENT.rank >= 0);
     setVisible("#queue", hasPermission("seeplaylist"));
@@ -989,7 +986,6 @@ function handlePermissionChange() {
         $(".add-temp").prop("checked", true);
         $(".add-temp").attr("disabled", true);
     } else {
-        $(".add-temp").prop("checked", false);
         $(".add-temp").attr("disabled", false);
     }
 
@@ -1339,6 +1335,13 @@ function parseMediaLink(url) {
             type: "dm"
         };
     }
+    // Raw files need to keep the query string
+    if ((m = url.match(/^fi:(.*)/))) {
+        return {
+            id: m[1],
+            type: "fi"
+        };
+    }
     // Generic for the rest.
     if ((m = url.match(/^([a-z]{2}):([^\?&#]+)/))) {
         return {
@@ -1463,12 +1466,6 @@ function formatChatMessage(data, last) {
     if (data.meta.shadow) {
         div.addClass("chat-shadow");
     }
-
-    div.find("img").load(function () {
-        if (SCROLLCHAT) {
-            scrollChat();
-        }
-    });
     return div;
 }
 
@@ -1480,21 +1477,55 @@ function addChatMessage(data) {
         return;
     }
     var div = formatChatMessage(data, LASTCHAT);
+    var msgBuf = $("#messagebuffer");
     // Incoming: a bunch of crap for the feature where if you hover over
     // a message, it highlights messages from that user
     var safeUsername = data.username.replace(/[^\w-]/g, '\\$');
     div.addClass("chat-msg-" + safeUsername);
-    div.appendTo($("#messagebuffer"));
-	div.attr("title",$("#currenttitle").text().substring(19))
+    div.appendTo(msgBuf);
     div.mouseover(function() {
         $(".chat-msg-" + safeUsername).addClass("nick-hover");
     });
     div.mouseleave(function() {
         $(".nick-hover").removeClass("nick-hover");
     });
-    trimChatBuffer();
-    if(SCROLLCHAT)
+    var oldHeight = msgBuf.prop("scrollHeight");
+    var numRemoved = trimChatBuffer();
+    if (SCROLLCHAT) {
         scrollChat();
+    } else {
+        var newMessageDiv = $("#newmessages-indicator");
+        if (!newMessageDiv.length) {
+            newMessageDiv = $("<div/>").attr("id", "newmessages-indicator")
+                    .insertBefore($("#chatline"));
+            var bgHack = $("<span/>").attr("id", "newmessages-indicator-bghack")
+                    .appendTo(newMessageDiv);
+
+            $("<span/>").addClass("glyphicon glyphicon-chevron-down")
+                    .appendTo(bgHack);
+            $("<span/>").text("New Messages Below").appendTo(bgHack);
+            $("<span/>").addClass("glyphicon glyphicon-chevron-down")
+                    .appendTo(bgHack);
+            newMessageDiv.click(function () {
+                SCROLLCHAT = true;
+                scrollChat();
+            });
+        }
+
+        if (numRemoved > 0) {
+            IGNORE_SCROLL_EVENT = true;
+            var diff = oldHeight - msgBuf.prop("scrollHeight");
+            scrollAndIgnoreEvent(msgBuf.scrollTop() - diff);
+        }
+    }
+
+    div.find("img").load(function () {
+        if (SCROLLCHAT) {
+            scrollChat();
+        } else if ($(this).position().top < 0) {
+            scrollAndIgnoreEvent(msgBuf.scrollTop() + $(this).height());
+        }
+    });
 
     var isHighlight = false;
     if (CLIENT.name && data.username != CLIENT.name) {
@@ -1518,6 +1549,8 @@ function trimChatBuffer() {
     for (var i = 0; i < count; i++) {
         buffer.firstChild.remove();
     }
+
+    return count;
 }
 
 function pingMessage(isHighlight) {
@@ -1541,6 +1574,39 @@ function pingMessage(isHighlight) {
 
 /* layouts */
 
+function undoHDLayout() {
+    $("body").removeClass("hd");
+    $("#drinkbar").detach().removeClass().addClass("col-lg-12 col-md-12")
+      .appendTo("#drinkbarwrap");
+    $("#chatwrap").detach().removeClass().addClass("col-lg-5 col-md-5")
+      .appendTo("#main");
+    $("#videowrap").detach().removeClass().addClass("col-lg-7 col-md-7")
+      .appendTo("#main");
+
+    $("#leftcontrols").detach().removeClass().addClass("col-lg-5 col-md-5")
+      .prependTo("#controlsrow");
+
+    $("#plcontrol").detach().appendTo("#rightcontrols");
+    $("#videocontrols").detach().appendTo("#rightcontrols");
+
+    $("#playlistrow").prepend('<div id="leftpane" class="col-lg-5 col-md-5" />');
+    $("#leftpane").append('<div id="leftpane-inner" class="row" />');
+
+    $("#pollwrap").detach().removeClass().addClass("col-lg-12 col-md-12")
+      .appendTo("#leftpane-inner");
+    $("#playlistmanagerwrap").detach().removeClass().addClass("col-lg-12 col-md-12")
+      .css("margin-top", "10px")
+      .appendTo("#leftpane-inner");
+
+    $("#rightpane").detach().removeClass().addClass("col-lg-7 col-md-7")
+      .appendTo("#playlistrow");
+
+    $("nav").addClass("navbar-fixed-top");
+    $("#mainpage").css("padding-top", "60px");
+    $("#queue").css("max-height", "500px");
+    $("#messagebuffer, #userlist").css("max-height", "");
+}
+
 function compactLayout() {
     /* Undo synchtube layout */
     if ($("body").hasClass("synchtube")) {
@@ -1563,36 +1629,7 @@ function compactLayout() {
 
     /* Undo HD layout */
     if ($("body").hasClass("hd")) {
-        $("body").removeClass("hd");
-        $("#drinkbar").detach().removeClass().addClass("col-lg-12 col-md-12")
-          .appendTo("#drinkbarwrap");
-        $("#chatwrap").detach().removeClass().addClass("col-lg-5 col-md-5")
-          .appendTo("#main");
-        $("#videowrap").detach().removeClass().addClass("col-lg-7 col-md-7")
-          .appendTo("#main");
-
-        $("#leftcontrols").detach().removeClass().addClass("col-lg-5 col-md-5")
-          .prependTo("#controlsrow");
-
-        $("#plcontrol").detach().appendTo("#rightcontrols");
-        $("#videocontrols").detach().appendTo("#rightcontrols");
-
-        $("#playlistrow").prepend('<div id="leftpane" class="col-lg-5 col-md-5" />');
-        $("#leftpane").append('<div id="leftpane-inner" class="row" />');
-
-        $("#pollwrap").detach().removeClass().addClass("col-lg-12 col-md-12")
-          .appendTo("#leftpane-inner");
-        $("#playlistmanagerwrap").detach().removeClass().addClass("col-lg-12 col-md-12")
-          .css("margin-top", "10px")
-          .appendTo("#leftpane-inner");
-
-        $("#rightpane").detach().removeClass().addClass("col-lg-7 col-md-7")
-          .appendTo("#playlistrow");
-
-        $("nav").addClass("navbar-fixed-top");
-        $("#mainpage").css("padding-top", "60px");
-        $("#queue").css("max-height", "500px");
-        $("#messagebuffer, #userlist").css("max-height", "");
+        undoHDLayout();
     }
 
     $("body").addClass("compact");
@@ -1600,6 +1637,9 @@ function compactLayout() {
 }
 
 function fluidLayout() {
+    if ($("body").hasClass("hd")) {
+        undoHDLayout();
+    }
     $(".container").removeClass("container").addClass("container-fluid");
     $("footer .container-fluid").removeClass("container-fluid").addClass("container");
     $("body").addClass("fluid");
@@ -1607,6 +1647,9 @@ function fluidLayout() {
 }
 
 function synchtubeLayout() {
+    if ($("body").hasClass("hd")) {
+        undoHDLayout();
+    }
     if($("#userlisttoggle").hasClass("glyphicon-chevron-right")){
         $("#userlisttoggle").removeClass("glyphicon-chevron-right").addClass("glyphicon-chevron-left")
     }
@@ -1618,6 +1661,9 @@ function synchtubeLayout() {
     $("body").addClass("synchtube");
 }
 
+/*
+ * "HD" is kind of a misnomer.  Should be renamed at some point.
+ */
 function hdLayout() {
     var videowrap = $("#videowrap"),
         chatwrap = $("#chatwrap"),
@@ -1912,13 +1958,18 @@ function waitUntilDefined(obj, key, fn) {
 }
 
 function hidePlayer() {
+    /* 2015-09-16
+     * Originally used to hide the player while a modal was open because of
+     * certain flash videos that always rendered on top.  Seems to no longer
+     * be an issue.  Uncomment this if it is.
     if (!PLAYER) return;
 
     $("#ytapiplayer").hide();
+    */
 }
 
 function unhidePlayer() {
-    $("#ytapiplayer").show();
+    //$("#ytapiplayer").show();
 }
 
 function chatDialog(div) {
@@ -1979,9 +2030,7 @@ function queueMessage(data, type) {
     var alerts = $(".qfalert.qf-" + type + " .alert");
     for (var i = 0; i < alerts.length; i++) {
         var al = $(alerts[i]);
-        var cl = al.clone();
-        cl.children().remove();
-        if (cl.text() === data.msg) {
+        if (al.data("reason") === data.msg) {
             var tag = al.find("." + ltype);
             if (tag.length > 0) {
                 var morelinks = al.find(".qflinks");
@@ -2014,13 +2063,15 @@ function queueMessage(data, type) {
         }
     }
     var text = data.msg;
+    text = text.replace(/(https?:[^ ]+)/g, "<a href='$1' target='_blank'>$1</a>");
     if (typeof data.link === "string") {
         text += "<br><a href='" + data.link + "' target='_blank'>" +
                 data.link + "</a>";
     }
-    makeAlert(title, text, type)
+    var newAlert = makeAlert(title, text, type)
         .addClass("linewrap qfalert qf-" + type)
         .appendTo($("#queuefail"));
+    newAlert.find(".alert").data("reason", data.msg);
 }
 
 function setupChanlogFilter(data) {
@@ -2529,8 +2580,12 @@ function formatUserPlaylistList() {
 function loadEmotes(data) {
     CHANNEL.emotes = [];
     data.forEach(function (e) {
-        e.regex = new RegExp(e.source, "gi");
-        CHANNEL.emotes.push(e);
+        if (e.image && e.name) {
+            e.regex = new RegExp(e.source, "gi");
+            CHANNEL.emotes.push(e);
+        } else {
+            console.error("Rejecting invalid emote: " + JSON.stringify(e));
+        }
     });
 }
 
@@ -2846,20 +2901,52 @@ function googlePlusSimulator2014(data) {
     return data;
 }
 
-function EmoteList() {
-    this.modal = $("#emotelist");
-    this.modal.on("hidden.bs.modal", unhidePlayer);
-    this.table = document.querySelector("#emotelist table");
+function EmoteList(selector, emoteClickCallback) {
+    this.elem = $(selector);
+    this.initSearch();
+    this.initSortOption();
+    this.table = this.elem.find(".emotelist-table")[0];
+    this.paginatorContainer = this.elem.find(".emotelist-paginator-container");
     this.cols = 5;
     this.itemsPerPage = 25;
     this.emotes = [];
-    this.emoteListChanged = true;
     this.page = 0;
+    this.emoteClickCallback = emoteClickCallback || function(){};
 }
+
+EmoteList.prototype.initSearch = function () {
+    this.searchbar = this.elem.find(".emotelist-search");
+    var self = this;
+
+    this.searchbar.keyup(function () {
+        var value = this.value.toLowerCase();
+        if (value) {
+            self.filter = function (emote) {
+                return emote.name.toLowerCase().indexOf(value) >= 0;
+            };
+        } else {
+            self.filter = null;
+        }
+        self.handleChange();
+        self.loadPage(0);
+    });
+};
+
+EmoteList.prototype.initSortOption = function () {
+    this.sortOption = this.elem.find(".emotelist-alphabetical");
+    this.sortAlphabetical = false;
+    var self = this;
+
+    this.sortOption.change(function () {
+        self.sortAlphabetical = this.checked;
+        self.handleChange();
+        self.loadPage(0);
+    });
+};
 
 EmoteList.prototype.handleChange = function () {
     this.emotes = CHANNEL.emotes.slice();
-    if (USEROPTS.emotelist_sort) {
+    if (this.sortAlphabetical) {
         this.emotes.sort(function (a, b) {
             var x = a.name.toLowerCase();
             var y = b.name.toLowerCase();
@@ -2880,19 +2967,9 @@ EmoteList.prototype.handleChange = function () {
 
     this.paginator = new NewPaginator(this.emotes.length, this.itemsPerPage,
             this.loadPage.bind(this));
-    var container = document.getElementById("emotelist-paginator-container");
-    container.innerHTML = "";
-    container.appendChild(this.paginator.elem);
+    this.paginatorContainer.html("");
+    this.paginatorContainer.append(this.paginator.elem);
     this.paginator.loadPage(this.page);
-    this.emoteListChanged = false;
-};
-
-EmoteList.prototype.show = function () {
-    if (this.emoteListChanged) {
-        this.handleChange();
-    }
-
-    this.modal.modal();
 };
 
 EmoteList.prototype.loadPage = function (page) {
@@ -2924,20 +3001,7 @@ EmoteList.prototype.loadPage = function (page) {
             img.src = emote.image;
             img.className = "emote-preview";
             img.title = emote.name;
-            img.onclick = function () {
-                var val = chatline.value;
-                if (!val) {
-                    chatline.value = emote.name;
-                } else {
-                    if (!val.charAt(val.length - 1).match(/\s/)) {
-                        chatline.value += " ";
-                    }
-                    chatline.value += emote.name;
-                }
-
-                _this.modal.modal("hide");
-                chatline.focus();
-            };
+            img.onclick = _this.emoteClickCallback.bind(null, emote);
 
             td.appendChild(img);
             row.appendChild(td);
@@ -2947,7 +3011,23 @@ EmoteList.prototype.loadPage = function (page) {
     this.page = page;
 };
 
-window.EMOTELIST = new EmoteList();
+function onEmoteClicked(emote) {
+    var val = chatline.value;
+    if (!val) {
+        chatline.value = emote.name;
+    } else {
+        if (!val.charAt(val.length - 1).match(/\s/)) {
+            chatline.value += " ";
+        }
+        chatline.value += emote.name;
+    }
+
+    window.EMOTELISTMODAL.modal("hide");
+    chatline.focus();
+}
+
+window.EMOTELIST = new EmoteList("#emotelist", onEmoteClicked);
+window.EMOTELIST.sortAlphabetical = USEROPTS.emotelist_sort;
 
 function showChannelSettings() {
     hidePlayer();

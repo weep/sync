@@ -1,5 +1,5 @@
 (function() {
-  var CUSTOM_EMBED_WARNING, CustomEmbedPlayer, DEFAULT_ERROR, DailymotionPlayer, EmbedPlayer, FilePlayer, HITBOX_ERROR, HitboxPlayer, ImgurPlayer, LivestreamPlayer, Player, RTMPPlayer, SoundCloudPlayer, TYPE_MAP, TwitchPlayer, USTREAM_ERROR, UstreamPlayer, VideoJSPlayer, VimeoPlayer, YouTubePlayer, codecToMimeType, genParam, sortSources,
+  var CUSTOM_EMBED_WARNING, CustomEmbedPlayer, DEFAULT_ERROR, DailymotionPlayer, EmbedPlayer, FilePlayer, GoogleDriveYouTubePlayer, HITBOX_ERROR, HitboxPlayer, ImgurPlayer, LivestreamPlayer, Player, RTMPPlayer, SoundCloudPlayer, TYPE_MAP, TwitchPlayer, USTREAM_ERROR, UstreamPlayer, VideoJSPlayer, VimeoPlayer, YouTubePlayer, codecToMimeType, genParam, sortSources,
     extend = function(child, parent) { for (var key in parent) { if (hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
     hasProp = {}.hasOwnProperty;
 
@@ -45,6 +45,8 @@
     Player.prototype.getVolume = function(cb) {
       return cb(VOLUME);
     };
+
+    Player.prototype.destroy = function() {};
 
     return Player;
 
@@ -445,22 +447,25 @@
   })(Player);
 
   sortSources = function(sources) {
-    var flv, flvOrder, i, idx, len, nonflv, pref, qualities, quality, qualityOrder, sourceOrder;
+    var flv, flvOrder, idx, j, len, nonflv, pref, qualities, quality, qualityOrder, sourceOrder;
     if (!sources) {
       console.error('sortSources() called with null source list');
       return [];
     }
     qualities = ['1080', '720', '480', '360', '240'];
     pref = String(USEROPTS.default_quality);
+    if (USEROPTS.default_quality === 'best') {
+      pref = '1080';
+    }
     idx = qualities.indexOf(pref);
     if (idx < 0) {
-      pref = '480';
+      idx = 2;
     }
-    qualityOrder = qualities.slice(idx).concat(qualities.slice(0, idx));
+    qualityOrder = qualities.slice(idx).concat(qualities.slice(0, idx).reverse());
     sourceOrder = [];
     flvOrder = [];
-    for (i = 0, len = qualityOrder.length; i < len; i++) {
-      quality = qualityOrder[i];
+    for (j = 0, len = qualityOrder.length; j < len; j++) {
+      quality = qualityOrder[j];
       if (quality in sources) {
         flv = [];
         nonflv = [];
@@ -524,6 +529,21 @@
               'data-quality': source.quality
             }).appendTo(video);
           });
+          if (data.meta.gdrive_subtitles) {
+            data.meta.gdrive_subtitles.available.forEach(function(subt) {
+              var label;
+              label = subt.lang_original;
+              if (subt.name) {
+                label += " (" + subt.name + ")";
+              }
+              return $('<track/>').attr({
+                src: "/gdvtt/" + data.id + "/" + subt.lang + "/" + subt.name + ".vtt?vid=" + data.meta.gdrive_subtitles.vid,
+                kind: 'subtitles',
+                srclang: subt.lang,
+                label: label
+              }).appendTo(video);
+            });
+          }
           _this.player = videojs(video[0], {
             autoplay: true,
             controls: true
@@ -547,9 +567,21 @@
                 return sendVideoUpdate();
               }
             });
-            return _this.player.on('seeked', function() {
+            _this.player.on('seeked', function() {
               return $('.vjs-waiting').removeClass('vjs-waiting');
             });
+            return setTimeout(function() {
+              return $('#ytapiplayer .vjs-subtitles-button .vjs-menu-item').each(function(i, elem) {
+                if (elem.textContent === localStorage.lastSubtitle) {
+                  elem.click();
+                }
+                return elem.onclick = function() {
+                  if (elem.attributes['aria-selected'].value === 'true') {
+                    return localStorage.lastSubtitle = elem.textContent;
+                  }
+                };
+              });
+            }, 1);
           });
         };
       })(this));
@@ -557,6 +589,7 @@
 
     VideoJSPlayer.prototype.load = function(data) {
       this.setMediaProperties(data);
+      this.destroy();
       return this.loadPlayer(data);
     };
 
@@ -606,6 +639,13 @@
       }
     };
 
+    VideoJSPlayer.prototype.destroy = function() {
+      removeOld();
+      if (this.player) {
+        return this.player.dispose();
+      }
+    };
+
     return VideoJSPlayer;
 
   })(Player);
@@ -624,7 +664,7 @@
       case 'mp3':
         return 'audio/mp3';
       case 'vorbis':
-        return 'audio/vorbis';
+        return 'audio/ogg';
       default:
         return 'video/flv';
     }
@@ -674,7 +714,7 @@
       this.setMediaProperties(data);
       waitUntilDefined(window, 'SC', (function(_this) {
         return function() {
-          var soundUrl, volumeSlider, widget;
+          var sliderHolder, soundUrl, volumeSlider, widget;
           removeOld();
           if (data.meta.scuri) {
             soundUrl = data.meta.scuri;
@@ -686,7 +726,9 @@
             id: 'scplayer',
             src: "https://w.soundcloud.com/player/?url=" + soundUrl
           });
-          volumeSlider = $('<div/>').attr('id', 'widget-volume').css('top', '170px').insertAfter(widget).slider({
+          sliderHolder = $('<div/>').attr('id', 'soundcloud-volume-holder').insertAfter(widget);
+          $('<span/>').attr('id', 'soundcloud-volume-label').addClass('label label-default').text('Volume').appendTo(sliderHolder);
+          volumeSlider = $('<div/>').attr('id', 'soundcloud-volume').appendTo(sliderHolder).slider({
             range: 'min',
             value: VOLUME * 100,
             stop: function(event, ui) {
@@ -729,9 +771,14 @@
         } else {
           soundUrl = data.id;
         }
-        return this.soundcloud.load(soundUrl, {
+        this.soundcloud.load(soundUrl, {
           auto_play: true
         });
+        return this.soundcloud.bind(SC.Widget.Events.READY, (function(_this) {
+          return function() {
+            return _this.setVolume(VOLUME);
+          };
+        })(this));
       } else {
         return console.error('SoundCloudPlayer::load() called but soundcloud is not ready');
       }
@@ -824,7 +871,8 @@
       var key, object, ref, value;
       object = $('<object/>').attr({
         type: 'application/x-shockwave-flash',
-        data: embed.src
+        data: embed.src,
+        wmode: 'opaque'
       });
       genParam('allowfullscreen', 'true').appendTo(object);
       genParam('allowscriptaccess', 'always').appendTo(object);
@@ -850,7 +898,8 @@
       } else {
         iframe = $('<iframe/>').attr({
           src: embed.src,
-          frameborder: '0'
+          frameborder: '0',
+          allowfullscreen: '1'
         });
         return iframe;
       }
@@ -962,12 +1011,6 @@
 
   })(EmbedPlayer);
 
-  window.rtmpEventHandler = function(id, event, data) {
-    if (event === 'volumechange') {
-      return PLAYER.volume = data.muted ? 0 : data.volume;
-    }
-  };
-
   window.RTMPPlayer = RTMPPlayer = (function(superClass) {
     extend(RTMPPlayer, superClass);
 
@@ -975,28 +1018,28 @@
       if (!(this instanceof RTMPPlayer)) {
         return new RTMPPlayer(data);
       }
-      this.volume = VOLUME;
-      this.load(data);
+      this.setupMeta(data);
+      RTMPPlayer.__super__.constructor.call(this, data);
     }
 
     RTMPPlayer.prototype.load = function(data) {
-      data.meta.embed = {
-        tag: 'object',
-        src: 'https://fpdownload.adobe.com/strobe/FlashMediaPlayback_101.swf',
-        params: {
-          flashvars: "src=" + data.id + "&streamType=live&javascriptCallbackFunction=rtmpEventHandler&autoPlay=true&volume=" + VOLUME
-        }
-      };
+      this.setupMeta(data);
       return RTMPPlayer.__super__.load.call(this, data);
     };
 
-    RTMPPlayer.prototype.getVolume = function(cb) {
-      return cb(this.volume);
+    RTMPPlayer.prototype.setupMeta = function(data) {
+      return data.meta.direct = {
+        480: [
+          {
+            link: data.id
+          }
+        ]
+      };
     };
 
     return RTMPPlayer;
 
-  })(EmbedPlayer);
+  })(VideoJSPlayer);
 
   HITBOX_ERROR = 'Hitbox.tv only serves its content over plain HTTP, but you are viewing this page over secure HTTPS.  Your browser therefore blocks the hitbox embed due to mixed content policy.  In order to view hitbox, you must view this page over plain HTTP (change "https://" to "http://" in the address bar)-- your websocket will still be connected using secure HTTPS.  This is something I have asked Hitbox to fix but they have not done so yet.';
 
@@ -1072,11 +1115,153 @@
 
   })(EmbedPlayer);
 
+  window.GoogleDriveYouTubePlayer = GoogleDriveYouTubePlayer = (function(superClass) {
+    extend(GoogleDriveYouTubePlayer, superClass);
+
+    function GoogleDriveYouTubePlayer(data) {
+      if (!(this instanceof GoogleDriveYouTubePlayer)) {
+        return new GoogleDriveYouTubePlayer(data);
+      }
+      this.setMediaProperties(data);
+      this.init(data);
+    }
+
+    GoogleDriveYouTubePlayer.prototype.init = function(data) {
+      var embed;
+      embed = $('<embed />').attr({
+        type: 'application/x-shockwave-flash',
+        src: "https://www.youtube.com/get_player?docid=" + data.id + "&ps=docs&partnerid=30&enablejsapi=1&cc_load_policy=1&auth_timeout=86400000000",
+        flashvars: 'autoplay=1&playerapiid=uniquePlayerId',
+        wmode: 'opaque',
+        allowscriptaccess: 'always'
+      });
+      removeOld(embed);
+      return window.onYouTubePlayerReady = (function(_this) {
+        return function() {
+          if (PLAYER !== _this) {
+            return;
+          }
+          _this.yt = embed[0];
+          window.gdriveStateChange = _this.onStateChange.bind(_this);
+          _this.yt.addEventListener('onStateChange', 'gdriveStateChange');
+          return _this.onReady();
+        };
+      })(this);
+    };
+
+    GoogleDriveYouTubePlayer.prototype.load = function(data) {
+      this.yt = null;
+      this.setMediaProperties(data);
+      return this.init(data);
+    };
+
+    GoogleDriveYouTubePlayer.prototype.onReady = function() {
+      this.yt.ready = true;
+      this.setVolume(VOLUME);
+      return this.setQuality(USEROPTS.default_quality);
+    };
+
+    GoogleDriveYouTubePlayer.prototype.onStateChange = function(ev) {
+      if (PLAYER !== this) {
+        return;
+      }
+      if ((ev === YT.PlayerState.PAUSED && !this.paused) || (ev === YT.PlayerState.PLAYING && this.paused)) {
+        this.paused = ev === YT.PlayerState.PAUSED;
+        if (CLIENT.leader) {
+          sendVideoUpdate();
+        }
+      }
+      if (ev === YT.PlayerState.ENDED && CLIENT.leader) {
+        return socket.emit('playNext');
+      }
+    };
+
+    GoogleDriveYouTubePlayer.prototype.play = function() {
+      this.paused = false;
+      if (this.yt && this.yt.ready) {
+        return this.yt.playVideo();
+      }
+    };
+
+    GoogleDriveYouTubePlayer.prototype.pause = function() {
+      this.paused = true;
+      if (this.yt && this.yt.ready) {
+        return this.yt.pauseVideo();
+      }
+    };
+
+    GoogleDriveYouTubePlayer.prototype.seekTo = function(time) {
+      if (this.yt && this.yt.ready) {
+        return this.yt.seekTo(time, true);
+      }
+    };
+
+    GoogleDriveYouTubePlayer.prototype.setVolume = function(volume) {
+      if (this.yt && this.yt.ready) {
+        if (volume > 0) {
+          this.yt.unMute();
+        }
+        return this.yt.setVolume(volume * 100);
+      }
+    };
+
+    GoogleDriveYouTubePlayer.prototype.setQuality = function(quality) {
+      var ytQuality;
+      if (!this.yt || !this.yt.ready) {
+        return;
+      }
+      ytQuality = (function() {
+        switch (String(quality)) {
+          case '240':
+            return 'small';
+          case '360':
+            return 'medium';
+          case '480':
+            return 'large';
+          case '720':
+            return 'hd720';
+          case '1080':
+            return 'hd1080';
+          case 'best':
+            return 'highres';
+          default:
+            return 'auto';
+        }
+      })();
+      if (ytQuality !== 'auto') {
+        return this.yt.setPlaybackQuality(ytQuality);
+      }
+    };
+
+    GoogleDriveYouTubePlayer.prototype.getTime = function(cb) {
+      if (this.yt && this.yt.ready) {
+        return cb(this.yt.getCurrentTime());
+      } else {
+        return cb(0);
+      }
+    };
+
+    GoogleDriveYouTubePlayer.prototype.getVolume = function(cb) {
+      if (this.yt && this.yt.ready) {
+        if (this.yt.isMuted()) {
+          return cb(0);
+        } else {
+          return cb(this.yt.getVolume() / 100);
+        }
+      } else {
+        return cb(VOLUME);
+      }
+    };
+
+    return GoogleDriveYouTubePlayer;
+
+  })(Player);
+
   TYPE_MAP = {
     yt: YouTubePlayer,
     vi: VimeoPlayer,
     dm: DailymotionPlayer,
-    gd: VideoJSPlayer,
+    gd: GoogleDriveYouTubePlayer,
     gp: VideoJSPlayer,
     fi: FilePlayer,
     jw: FilePlayer,
@@ -1091,19 +1276,27 @@
   };
 
   window.loadMediaPlayer = function(data) {
-    var e;
-    if (data.meta.direct) {
+    var e, error, error1, error2, error3;
+    try {
+      if (window.PLAYER) {
+        window.PLAYER.destroy();
+      }
+    } catch (error1) {
+      error = error1;
+      console.error(error);
+    }
+    if (data.meta.direct && data.type !== 'gd') {
       try {
         return window.PLAYER = new VideoJSPlayer(data);
-      } catch (_error) {
-        e = _error;
+      } catch (error2) {
+        e = error2;
         return console.error(e);
       }
     } else if (data.type in TYPE_MAP) {
       try {
         return window.PLAYER = TYPE_MAP[data.type](data);
-      } catch (_error) {
-        e = _error;
+      } catch (error3) {
+        e = error3;
         return console.error(e);
       }
     }
@@ -1164,7 +1357,7 @@
 
   window.removeOld = function(replace) {
     var old;
-    $('#sc_volume').remove();
+    $('#soundcloud-volume-holder').remove();
     if (replace == null) {
       replace = $('<div/>').addClass('embed-responsive-item');
     }
