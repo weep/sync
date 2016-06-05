@@ -642,7 +642,6 @@ function showUserOptions() {
     $("#us-no-emotes").prop("checked", USEROPTS.no_emotes);
 
     $("#us-modflair").prop("checked", USEROPTS.modhat);
-    $("#us-joinmessage").prop("checked", USEROPTS.joinmessage);
     $("#us-shadowchat").prop("checked", USEROPTS.show_shadowchat);
 
     formatScriptAccessPrefs();
@@ -677,7 +676,6 @@ function saveUserOptions() {
 
     if (CLIENT.rank >= 2) {
         USEROPTS.modhat      = $("#us-modflair").prop("checked");
-        USEROPTS.joinmessage = $("#us-joinmessage").prop("checked");
         USEROPTS.show_shadowchat = $("#us-shadowchat").prop("checked");
     }
 
@@ -755,6 +753,17 @@ function applyOpts() {
 }
 
 function showPollMenu() {
+    function parseTimeout(t) {
+        var m;
+        if (m = t.match(/^(\d+):(\d+)$/)) {
+            return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+        } else if (t.match(/^(\d+)$/)) {
+            return parseInt(m[1], 10);
+        } else {
+            throw new Error("Invalid timeout value '" + t + "'");
+        }
+    }
+
     $("#pollwrap .poll-menu").remove();
     var menu = $("<div/>").addClass("well poll-menu")
         .prependTo($("#pollwrap"));
@@ -773,12 +782,20 @@ function showPollMenu() {
         .appendTo(menu);
 
     $("<strong/>").text("Timeout (optional)").appendTo(menu);
+    $("<p/>").text("If you specify a timeout, the poll will automatically " +
+                   "be closed after that amount of time.  You can either " +
+                   "specify the number of seconds or use the format " +
+                   "minutes:seconds.  Examples: 90 (90 seconds), 5:30 " +
+                   "(5 minutes, 30 seconds)")
+        .addClass("text-muted")
+        .appendTo(menu);
     var timeout = $("<input/>").addClass("form-control")
         .attr("type", "text")
         .appendTo(menu);
+    var timeoutError = null;
 
     var checkboxOuter = $("<div/>").addClass("checkbox").appendTo(menu);
-    var lbl = $("<label/>").text("Hide poll results")
+    var lbl = $("<label/>").text("Hide poll results until it closes")
         .appendTo(checkboxOuter);
     var hidden = $("<input/>").attr("type", "checkbox")
         .prependTo(lbl);
@@ -804,6 +821,23 @@ function showPollMenu() {
         .text("Open Poll")
         .appendTo(menu)
         .click(function() {
+            var t = timeout.val().trim();
+            if (t) {
+                try {
+                    t = parseTimeout(t);
+                } catch (e) {
+                    if (timeoutError) {
+                        timeoutError.remove();
+                    }
+
+                    timeoutError = $("<p/>").addClass("text-danger").text(e.message);
+                    timeoutError.insertAfter(timeout);
+                    timeout.focus();
+                    return;
+                }
+            } else {
+                t = undefined;
+            }
             var opts = [];
             menu.find(".poll-menu-option").each(function() {
                 if($(this).val() != "")
@@ -813,7 +847,7 @@ function showPollMenu() {
                 title: title.val(),
                 opts: opts,
                 obscured: hidden.prop("checked"),
-                timeout: timeout.val() ? parseInt(timeout.val()) : undefined
+                timeout: t
             });
             menu.remove();
         });
@@ -2070,20 +2104,11 @@ function queueMessage(data, type) {
     }
     var newAlert = makeAlert(title, text, type)
         .addClass("linewrap qfalert qf-" + type)
-        .appendTo($("#queuefail"));
+        .prependTo($("#queuefail"));
     newAlert.find(".alert").data("reason", data.msg);
 }
 
 function setupChanlogFilter(data) {
-    var getKey = function (ln) {
-        var left = ln.indexOf("[", 1);
-        var right = ln.indexOf("]", left);
-        if (left === -1 || right === -1) {
-            return "unknown";
-        }
-        return ln.substring(left+1, right);
-    };
-
     data = data.split("\n").filter(function (ln) {
         return ln.indexOf("[") === 0 && ln.indexOf("]") > 0;
     });
@@ -2095,7 +2120,10 @@ function setupChanlogFilter(data) {
 
     var keys = {};
     data.forEach(function (ln) {
-        keys[getKey(ln)] = true;
+        var m = ln.match(/^\[.*?\] \[(\w+?)\].*$/);
+        if (m) {
+            keys[m[1]] = true;
+        }
     });
 
     Object.keys(keys).forEach(function (key) {
@@ -3036,4 +3064,42 @@ function showChannelSettings() {
     });
 
     $("#channeloptions").modal();
+}
+
+// There is a point where this file needed to stop and we have clearly passed
+// it but let's keep going and see what happens
+
+function startQueueSpinner(data) {
+    if ($("#queueprogress").length > 0) {
+        return;
+    }
+
+    var id = data.id;
+    if (data.type === "yp") {
+        id = "$any";
+    }
+
+    var progress = $("<div/>").addClass("progress").attr("id", "queueprogress")
+            .data("queue-id", id);
+    var progressBar = $("<div/>").addClass("progress-bar progress-bar-striped active")
+            .attr({
+                role: "progressbar",
+                "aria-valuenow": "100",
+                "aria-valuemin": "0",
+                "aria-valuemax": "100",
+            }).css({
+                width: "100%"
+            }).appendTo(progress);
+    progress.appendTo($("#addfromurl"));
+}
+
+function stopQueueSpinner(data) {
+    var shouldRemove = (data !== null &&
+                        typeof data === 'object' &&
+                        $("#queueprogress").data("queue-id") === data.id);
+    shouldRemove = shouldRemove || data === null;
+    shouldRemove = shouldRemove || $("#queueprogress").data("queue-id") === "$any";
+    if (shouldRemove) {
+        $("#queueprogress").remove();
+    }
 }
