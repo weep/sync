@@ -53,7 +53,20 @@ function User(socket) {
         }
 
         self.waitFlag(Flags.U_READY, function () {
-            var chan = Server.getServer().getChannel(data.name);
+            var chan;
+            try {
+                chan = Server.getServer().getChannel(data.name);
+            } catch (error) {
+                if (error.code !== 'EWRONGPART') {
+                    throw error;
+                }
+
+                self.socket.emit("errorMsg", {
+                    msg: "Channel '" + data.name + "' is hosted on another server.  " +
+                         "Try refreshing the page to update the connection URL."
+                });
+                return;
+            }
             chan.joinUser(self, data);
         });
     });
@@ -164,6 +177,10 @@ User.prototype.inChannel = function () {
     return this.channel != null && !this.channel.dead;
 };
 
+User.prototype.inRegisteredChannel = function () {
+    return this.inChannel() && this.channel.is(Flags.C_REGISTERED);
+};
+
 /* Called when a user's AFK status changes */
 User.prototype.setAFK = function (afk) {
     if (!this.inChannel()) {
@@ -270,17 +287,15 @@ User.prototype.login = function (name, pw) {
             return;
         }
 
-        var opts = { name: user.name };
-        if (self.inChannel()) {
-            opts.channel = self.channel.name;
-        }
+        self.account.name = user.name;
         self.setFlag(Flags.U_REGISTERED);
-        self.refreshAccount(opts, function (err, account) {
+        self.refreshAccount(function (err, account) {
             if (err) {
                 Logger.errlog.log("[SEVERE] getAccount failed for user " + user.name);
                 Logger.errlog.log(err);
                 self.clearFlag(Flags.U_REGISTERED);
                 self.clearFlag(Flags.U_LOGGING_IN);
+                self.account.name = "";
                 return;
             }
             self.socket.emit("login", {
@@ -288,7 +303,6 @@ User.prototype.login = function (name, pw) {
                 name: user.name
             });
             db.recordVisit(self.realip, self.getName());
-            self.socket.emit("rank", self.account.effectiveRank);
             Logger.syslog.log(self.realip + " logged in as " + user.name);
             self.setFlag(Flags.U_LOGGED_IN);
             self.clearFlag(Flags.U_LOGGING_IN);
@@ -358,14 +372,12 @@ User.prototype.guestLogin = function (name) {
         // Login succeeded
         lastguestlogin[self.realip] = Date.now();
 
-        var opts = { name: name };
-        if (self.inChannel()) {
-            opts.channel = self.channel.name;
-        }
-        self.refreshAccount(opts, function (err, account) {
+        self.account.name = name;
+        self.refreshAccount(function (err, account) {
             if (err) {
                 Logger.errlog.log("[SEVERE] getAccount failed for guest login " + name);
                 Logger.errlog.log(err);
+                self.account.name = "";
                 return;
             }
 
@@ -375,7 +387,6 @@ User.prototype.guestLogin = function (name) {
                 guest: true
             });
             db.recordVisit(self.realip, self.getName());
-            self.socket.emit("rank", 0);
             Logger.syslog.log(self.realip + " signed in as " + name);
             self.setFlag(Flags.U_LOGGED_IN);
             self.emit("login", self.account);
@@ -398,29 +409,28 @@ setInterval(function () {
     }
 }, 5 * 60 * 1000);
 
-User.prototype.refreshAccount = function (opts, cb) {
-    if (!cb) {
-        cb = opts;
-        opts = {};
-    }
-
-    var different = false;
-    for (var key in opts) {
-        if (opts[key] !== this.account[key]) {
-            different = true;
-            break;
-        }
-    }
-
-    if (!different) {
-        return;
-    }
-
-    var name = ("name" in opts) ? opts.name : this.account.name;
-    opts.registered = this.is(Flags.U_REGISTERED);
+User.prototype.refreshAccount = function (cb) {
+    var name = this.account.name;
+    var opts = {
+        registered: this.is(Flags.U_REGISTERED),
+        channel: this.inRegisteredChannel() ? this.channel.name : false
+    };
     var self = this;
     var old = this.account;
     Account.getAccount(name, this.realip, opts, function (err, account) {
+        // TODO
+        //
+        // This is a hack to fix #583, an issue where racing callbacks
+        // from refreshAccount() can cause the user's rank to get out
+        // of sync.  Ideally this should be removed in favor of a more
+        // robust way of handling updating account state, perhaps a mutex.
+        if (self.is(Flags.U_REGISTERED) !== opts.registered ||
+                (self.inRegisteredChannel() && !opts.channel) ||
+                self.account.name !== name) {
+            self.refreshAccount(cb);
+            return;
+        }
+
         if (!err) {
             /* Update account if anything changed in the meantime */
             for (var key in old) {
@@ -430,10 +440,12 @@ User.prototype.refreshAccount = function (opts, cb) {
             }
             self.account = account;
             if (account.effectiveRank !== old.effectiveRank) {
+                self.socket.emit("rank", self.account.effectiveRank);
                 self.emit("effectiveRankChange", self.account.effectiveRank);
             }
         }
-        cb(err, account);
+
+        process.nextTick(cb, err, account);
     });
 };
 

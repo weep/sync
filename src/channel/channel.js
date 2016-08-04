@@ -11,6 +11,9 @@ import * as ChannelStore from '../channel-storage/channelstore';
 import { ChannelStateSizeError } from '../errors';
 import Promise from 'bluebird';
 import { EventEmitter } from 'events';
+import { throttle } from '../util/throttle';
+
+const USERCOUNT_THROTTLE = 10000;
 
 class ReferenceCounter {
     constructor(channel) {
@@ -81,6 +84,9 @@ function Channel(name) {
     this.users = [];
     this.refCounter = new ReferenceCounter(this);
     this.flags = 0;
+    this.broadcastUsercount = throttle(() => {
+        this.broadcastAll("usercount", this.users.length);
+    }, USERCOUNT_THROTTLE);
     var self = this;
     db.channels.load(this, function (err) {
         if (err && err !== "Channel is not registered") {
@@ -316,8 +322,9 @@ Channel.prototype.joinUser = function (user, data) {
             return;
         }
 
+        user.channel = self;
         if (self.is(Flags.C_REGISTERED)) {
-            user.refreshAccount({ channel: self.name }, function (err, account) {
+            user.refreshAccount(function (err, account) {
                 if (err) {
                     Logger.errlog.log("user.refreshAccount failed at Channel.joinUser");
                     Logger.errlog.log(err.stack);
@@ -341,11 +348,9 @@ Channel.prototype.joinUser = function (user, data) {
 
             self.checkModules("onUserPreJoin", [user, data], function (err, result) {
                 if (result === ChannelModule.PASSTHROUGH) {
-                    if (user.account.channelRank !== user.account.globalRank) {
-                        user.socket.emit("rank", user.account.effectiveRank);
-                    }
                     self.acceptUser(user);
                 } else {
+                    user.channel = null;
                     user.account.channelRank = 0;
                     user.account.effectiveRank = user.account.globalRank;
                     self.refCounter.unref("Channel::user");
@@ -356,7 +361,6 @@ Channel.prototype.joinUser = function (user, data) {
 };
 
 Channel.prototype.acceptUser = function (user) {
-    user.channel = this;
     user.setFlag(Flags.U_IN_CHANNEL);
     user.socket.join(this.name);
     user.autoAFK();
@@ -403,7 +407,7 @@ Channel.prototype.acceptUser = function (user) {
     });
 
     this.sendUserlist([user]);
-    this.sendUsercount(this.users);
+    this.broadcastUsercount();
     if (!this.is(Flags.C_REGISTERED)) {
         user.socket.emit("channelNotRegistered");
     }
@@ -434,7 +438,7 @@ Channel.prototype.partUser = function (user) {
     Object.keys(this.modules).forEach(function (m) {
         self.modules[m].onUserPart(user);
     });
-    this.sendUsercount(this.users);
+    this.broadcastUsercount();
 
     this.refCounter.unref("Channel::user");
     user.die();

@@ -6,7 +6,9 @@ Callbacks = {
 
     /* fired when socket connection completes */
     connect: function() {
-        socket.emit("initChannelCallbacks");
+        HAS_CONNECTED_BEFORE = true;
+        SOCKETIO_CONNECT_ERROR_COUNT = 0;
+        $("#socketio-connect-error").remove();
         socket.emit("joinChannel", {
             name: CHANNEL.name
         });
@@ -33,7 +35,7 @@ Callbacks = {
             return;
         $("<div/>")
             .addClass("server-msg-disconnect")
-            .text("Disconnected from server.  Attempting reconnection...")
+            .text("Disconnected from server.")
             .appendTo($("#messagebuffer"));
         scrollChat();
     },
@@ -65,7 +67,8 @@ Callbacks = {
 
     announcement: function(data) {
         $("#announcements").html("");
-        makeAlert(data.title, data.text)
+        var signature = "<br>\u2014" + data.from;
+        var announcement = makeAlert(data.title, data.text + signature)
             .appendTo($("#announcements"));
     },
 
@@ -367,10 +370,6 @@ Callbacks = {
         CLIENT.rank = r;
         handlePermissionChange();
         if(SUPERADMIN && $("#setrank").length == 0) {
-            $("<a/>").attr("href", "/acp")
-                .attr("target", "_blank")
-                .text("ACP")
-                .appendTo($("<li/>").appendTo($(".nav")[0]));
             var li = $("<li/>").addClass("dropdown")
                 .attr("id", "setrank")
                 .appendTo($(".nav")[0]);
@@ -935,6 +934,8 @@ Callbacks = {
             })(i);
 
         }
+        $("<span/>").addClass("label label-default pull-right").data('timestamp',data.timestamp).appendTo(poll)
+            .text(new Date(data.timestamp).toTimeString().split(" ")[0]);
 
         poll.find(".btn").attr("disabled", !hasPermission("pollvote"));
     },
@@ -968,10 +969,8 @@ Callbacks = {
 
     emoteList: function (data) {
         loadEmotes(data);
-        var tbl = $("#cs-emotes table");
-        tbl.data("entries", data);
-        formatCSEmoteList();
         EMOTELIST.handleChange();
+        CSEMOTELIST.handleChange();
     },
 
     updateEmote: function (data) {
@@ -981,15 +980,16 @@ Callbacks = {
             if (CHANNEL.emotes[i].name === data.name) {
                 found = true;
                 CHANNEL.emotes[i] = data;
-                formatCSEmoteList();
                 break;
             }
         }
 
         if (!found) {
             CHANNEL.emotes.push(data);
-            formatCSEmoteList();
         }
+
+        EMOTELIST.handleChange();
+        CSEMOTELIST.handleChange();
     },
 
     removeEmote: function (data) {
@@ -1029,6 +1029,13 @@ Callbacks = {
             "unneeded playlist items, filters, and/or emotes.  Changes to the channel " +
             "will not be saved until the size is reduced to under the limit.")
             .attr("id", "chandumptoobig");
+    },
+
+    partitionChange: function (socketConfig) {
+        window.socket.disconnect();
+        HAS_CONNECTED_BEFORE = false;
+        ioServerConnect(socketConfig);
+        setupCallbacks();
     }
 }
 
@@ -1050,65 +1057,155 @@ setupCallbacks = function() {
             });
         })(key);
     }
+
+    socket.on("connect_error", function (error) {
+        // If the socket has connected at least once during this
+        // session and now gets a connect error, it is likely because
+        // the server is down temporarily and not because of any configuration
+        // issue.  Therefore, omit the warning message about refreshing.
+        if (HAS_CONNECTED_BEFORE) {
+            return;
+        }
+
+        SOCKETIO_CONNECT_ERROR_COUNT++;
+        if (SOCKETIO_CONNECT_ERROR_COUNT >= 3 &&
+                $("#socketio-connect-error").length === 0) {
+            var message = "Failed to connect to the server.  Try clearing your " +
+                          "cache and refreshing the page.";
+            makeAlert("Error", message, "alert-danger")
+                .attr("id", "socketio-connect-error")
+                .appendTo($("#announcements"));
+        }
+    });
 };
 
-(function () {
-    if (typeof io === "undefined") {
-        makeAlert("Uh oh!", "It appears the socket.io connection " +
-                            "has failed.  If this error persists, a firewall or " +
-                            "antivirus is likely blocking the connection, or the " +
-                            "server is down.", "alert-danger")
+function ioServerConnect(socketConfig) {
+    if (socketConfig.error) {
+        makeAlert("Error", "Socket.io configuration returned error: " +
+                socketConfig.error, "alert-danger")
             .appendTo($("#announcements"));
-        Callbacks.disconnect();
         return;
     }
 
+    var servers;
+    if (socketConfig.alt && socketConfig.alt.length > 0 &&
+            localStorage.useAltServer === "true") {
+        servers = socketConfig.alt;
+        console.log("Using alt servers: " + JSON.stringify(servers));
+    } else {
+        servers = socketConfig.servers;
+    }
+
+    var chosenServer = null;
+    servers.forEach(function (server) {
+        if (chosenServer === null) {
+            chosenServer = server;
+        } else if (server.secure && !chosenServer.secure) {
+            chosenServer = server;
+        } else if (!server.ipv6Only && chosenServer.ipv6Only) {
+            chosenServer = server;
+        }
+    });
+
+    console.log("Connecting to " + JSON.stringify(chosenServer));
+
+    if (chosenServer === null) {
+        makeAlert("Error",
+                "Socket.io configuration was unable to find a suitable server",
+                "alert-danger")
+            .appendTo($("#announcements"));
+    }
+
+    var opts = {
+        secure: chosenServer.secure
+    };
+
+    window.socket = io(chosenServer.url, opts);
+}
+
+var USING_LETS_ENCRYPT = false;
+
+function initSocketIO(socketConfig) {
+    function genericConnectionError() {
+        var message = "The socket.io library could not be loaded from <code>" +
+                      source + "</code>.  Ensure that it is not being blocked " +
+                      "by a script blocking extension or firewall and try again.";
+        makeAlert("Error", message, "alert-danger")
+            .appendTo($("#announcements"));
+        Callbacks.disconnect();
+    }
+
+    if (typeof io === "undefined") {
+        var script = document.getElementById("socketio-js");
+        var source = "unknown";
+        if (script) {
+            source = script.src;
+        }
+
+        if (/^https/.test(source) && location.protocol === "http:"
+                && USING_LETS_ENCRYPT) {
+            checkLetsEncrypt(socketConfig, genericConnectionError);
+            return;
+        }
+
+        genericConnectionError();
+        return;
+    }
+
+    ioServerConnect(socketConfig);
+    setupCallbacks();
+}
+
+function checkLetsEncrypt(socketConfig, nonLetsEncryptError) {
+    var servers = socketConfig.servers.filter(function (server) {
+        return !server.secure && !server.ipv6Only
+    });
+
+    if (servers.length === 0) {
+        nonLetsEncryptError();
+        return;
+    }
+
+    $.ajax({
+        url: servers[0].url + "/socket.io/socket.io.js",
+        dataType: "script",
+        timeout: 10000
+    }).done(function () {
+        var message = "Your browser cannot connect securely because it does " +
+                      "not support the newer Let's Encrypt certificate " +
+                      "authority.  Click below to acknowledge and continue " +
+                      "connecting over an unencrypted connection.  See " +
+                      "<a href=\"https://community.letsencrypt.org/t/which-browsers-and-operating-systems-support-lets-encrypt/4394\" target=\"_blank\">here</a> " +
+                      "for more details.";
+        var connectionAlert = makeAlert("Error", message, "alert-danger")
+            .appendTo($("#announcements"));
+
+        var button = document.createElement("button");
+        button.className = "btn btn-default";
+        button.textContent = "Connect Anyways";
+
+        var alertBox = connectionAlert.find(".alert")[0];
+        alertBox.appendChild(document.createElement("hr"));
+        alertBox.appendChild(button);
+
+        button.onclick = function connectAnyways() {
+            ioServerConnect({
+                servers: servers
+            });
+            setupCallbacks();
+        };
+    }).error(function () {
+        nonLetsEncryptError();
+    });
+}
+
+(function () {
     $.getJSON("/socketconfig/" + CHANNEL.name + ".json")
         .done(function (socketConfig) {
-            if (socketConfig.error) {
-                makeAlert("Error", "Socket.io configuration returned error: " +
-                        socketConfig.error, "alert-danger")
-                    .appendTo($("#announcements"));
-                return;
-            }
-
-            var servers;
-            if (socketConfig.alt && socketConfig.alt.length > 0 &&
-                    localStorage.useAltServer === "true") {
-                servers = socketConfig.alt;
-                console.log("Using alt servers: " + JSON.stringify(servers));
-            } else {
-                servers = socketConfig.servers;
-            }
-
-            var chosenServer = null;
-            servers.forEach(function (server) {
-                if (chosenServer === null) {
-                    chosenServer = server;
-                } else if (server.secure && !chosenServer.secure) {
-                    chosenServer = server;
-                } else if (!server.ipv6Only && chosenServer.ipv6Only) {
-                    chosenServer = server;
-                }
-            });
-
-            console.log("Connecting to " + JSON.stringify(chosenServer));
-
-            if (chosenServer === null) {
-                makeAlert("Error",
-                        "Socket.io configuration was unable to find a suitable server",
-                        "alert-danger")
-                    .appendTo($("#announcements"));
-            }
-
-            var opts = {
-                secure: chosenServer.secure
-            };
-
-            socket = io(chosenServer.url, opts);
-            setupCallbacks();
+            initSocketIO(socketConfig);
         }).fail(function () {
-            makeAlert("Error", "Failed to retrieve socket.io configuration",
+            makeAlert("Error", "Failed to retrieve socket.io configuration.  " +
+                               "Please try again in a few minutes.",
                     "alert-danger")
                 .appendTo($("#announcements"));
             Callbacks.disconnect();
