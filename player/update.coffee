@@ -2,19 +2,22 @@ TYPE_MAP =
     yt: YouTubePlayer
     vi: VimeoPlayer
     dm: DailymotionPlayer
-    gd: GoogleDriveYouTubePlayer
+    gd: GoogleDrivePlayer
     gp: VideoJSPlayer
     fi: FilePlayer
     jw: FilePlayer
     sc: SoundCloudPlayer
     li: LivestreamPlayer
     tw: TwitchPlayer
+    tv: TwitchPlayer
     cu: CustomEmbedPlayer
     rt: RTMPPlayer
     hb: HitboxPlayer
     us: UstreamPlayer
     im: ImgurPlayer
     vm: VideoJSPlayer
+    hl: HLSPlayer
+    sb: VideoJSPlayer
 
 window.loadMediaPlayer = (data) ->
     try

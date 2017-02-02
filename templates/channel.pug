@@ -50,7 +50,10 @@ html(lang="en")
                 span.input-group-addon Guest login
                 input#guestname.form-control(type="text", placeholder="Name")
             #videowrap.col-lg-7.col-md-7
-              p#currenttitle Nothing Playing
+              p#videowrap-header
+                span#resize-video-smaller.glyphicon.glyphicon-minus.pointer(title="Make the video smaller")
+                span#resize-video-larger.glyphicon.glyphicon-plus.pointer(title="Make the video larger")
+                span#currenttitle Nothing Playing
               .embed-responsive.embed-responsive-16by9
                 #ytapiplayer.embed-responsive-item
           #controlsrow.row
@@ -240,6 +243,7 @@ html(lang="en")
     script(id="socketio-js", src=sioSource)
     script(src="/js/data.js")
     script(src="/js/util.js")
+    script(src="/js/tabcomplete.js")
     script(src="/js/player.js")
     script(src="/js/paginator.js")
     script(src="/js/ui.js")
@@ -249,3 +253,5 @@ html(lang="en")
     script(defer, src="/js/sc.js")
     script(defer, src="/js/froogaloop.min.js")
     script(defer, src="/js/video.js")
+    script(defer, src="/js/videojs-contrib-hls.min.js")
+    script(defer, src="https://player.twitch.tv/js/embed/v1.js")

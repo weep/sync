@@ -1,3 +1,10 @@
+if (/^v0/.test(process.version)) {
+    console.error('node.js ' + process.version + ' is not supported.  ' +
+            'For more information, visit ' +
+            'https://github.com/calzoneman/sync/wiki/CyTube-3.0-Installation-Guide#nodejs');
+    process.exit(1);
+}
+
 try {
     var Server = require("./lib/server");
 } catch (err) {
@@ -119,3 +126,8 @@ if (Config.get("service-socket.enabled")) {
     var server = new ServiceSocket;
     server.init(handleLine, Config.get("service-socket.socket"));
 }
+
+require("bluebird");
+process.on("unhandledRejection", function (reason, promise) {
+    Logger.errlog.log("[SEVERE] Unhandled rejection: " + reason.stack);
+});

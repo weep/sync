@@ -11,6 +11,9 @@ var mediaquery = require("cytube-mediaquery");
 var YouTube = require("cytube-mediaquery/lib/provider/youtube");
 var Vimeo = require("cytube-mediaquery/lib/provider/vimeo");
 var Vidme = require("cytube-mediaquery/lib/provider/vidme");
+var Streamable = require("cytube-mediaquery/lib/provider/streamable");
+var GoogleDrive = require("cytube-mediaquery/lib/provider/googledrive");
+var TwitchVOD = require("cytube-mediaquery/lib/provider/twitch-vod");
 
 /*
  * Preference map of quality => youtube formats.
@@ -393,6 +396,25 @@ var Getters = {
         callback(false, media);
     },
 
+    /* twitch VOD */
+    tv: function (id, callback) {
+        var m = id.match(/([cv]\d+)/);
+        if (m) {
+            id = m[1];
+        } else {
+            process.nextTick(callback, "Invalid Twitch VOD ID");
+            return;
+        }
+
+        TwitchVOD.lookup(id).then(video => {
+            const media = new Media(video.id, video.title, video.duration,
+                                    "tv", video.meta);
+            process.nextTick(callback, false, media);
+        }).catch(function (err) {
+            callback(err.message || err, null);
+        });
+    },
+
     /* ustream.tv */
     us: function (id, callback) {
         /**
@@ -457,6 +479,13 @@ var Getters = {
         callback(false, media);
     },
 
+    /* HLS stream */
+    hl: function (id, callback) {
+        var title = "Livestream";
+        var media = new Media(id, title, "--:--", "hl");
+        callback(false, media);
+    },
+
     /* imgur.com albums */
     im: function (id, callback) {
         /**
@@ -492,6 +521,7 @@ var Getters = {
 
     /* google docs */
     gd: function (id, callback) {
+        GoogleDrive.setHTML5HackEnabled(Config.get("google-drive.html5-hack-enabled"));
         var data = {
             type: "googledrive",
             kind: "single",
@@ -560,6 +590,24 @@ var Getters = {
             const media = new Media(video.id, video.title, video.duration,
                                     "vm", video.meta);
             process.nextTick(callback, false, media);
+        }).catch(function (err) {
+            callback(err.message || err, null);
+        });
+    },
+
+    /* streamable */
+    sb: function (id, callback) {
+        if (!/^[\w-]+$/.test(id)) {
+            process.nextTick(callback, "Invalid streamable.com ID");
+            return;
+        }
+
+        Streamable.lookup(id).then(video => {
+            const media = new Media(video.id, video.title, video.duration,
+                                    "sb", video.meta);
+            process.nextTick(callback, false, media);
+        }).catch(function (err) {
+            callback(err.message || err, null);
         });
     }
 };
