@@ -63,6 +63,7 @@ mixin miscoptions
       +rcheckbox-auto("cs-allow_dupes", "Allow duplicate videos on the playlist")
       +textbox-auto("cs-voteskip_ratio", "Voteskip ratio", "0.5")
       +textbox-auto("cs-maxlength", "Max video length", "HH:MM:SS")
+      +textbox-timeinput-auto("cs-playlist_max_duration_per_user", "Max total queue time per user", "HH:MM:SS")
       +textbox-auto("cs-afk_timeout", "Auto-AFK Delay", "0 (disabled)")
       .form-group
         .col-sm-offset-4
@@ -85,7 +86,7 @@ mixin adminoptions
   #cs-adminoptions.tab-pane
     h4 Admin-Only Settings
     form.form-horizontal(action="javascript:void(0)")
-      - var defname = "CyTube - /r/" + channelName
+      - var defname = `CyTube - /${channelPath}/${channelName}`
       +textbox-auto("cs-pagetitle", "Page title", defname)
       +textbox-auto("cs-password", "Password", "leave blank to disable")
       +textbox-auto("cs-externalcss", "External CSS", "Stylesheet URL")

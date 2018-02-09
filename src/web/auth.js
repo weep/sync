@@ -7,7 +7,6 @@
 var pug = require("pug");
 var path = require("path");
 var webserver = require("./webserver");
-var cookieall = webserver.cookieall;
 var sendPug = require("./pug").sendPug;
 var Logger = require("../logger");
 var $util = require("../utilities");
@@ -16,6 +15,26 @@ var Config = require("../config");
 var url = require("url");
 var session = require("../session");
 var csrf = require("./csrf");
+
+const LOGGER = require('@calzoneman/jsli')('web/auth');
+
+function getSafeReferrer(req) {
+    const referrer = req.header('referer');
+
+    if (!referrer) {
+        return null;
+    }
+
+    const { hostname } = url.parse(referrer);
+
+    // TODO: come back to this when refactoring http alt domains
+    if (hostname === Config.get('http.root-domain')
+            || Config.get('http.alt-domains').includes(hostname)) {
+        return referrer;
+    } else {
+        return null;
+    }
+}
 
 /**
  * Processes a login request.  Sets a cookie upon successful authentication
@@ -26,7 +45,7 @@ function handleLogin(req, res) {
     var name = req.body.name;
     var password = req.body.password;
     var rememberMe = req.body.remember;
-    var dest = req.body.dest || req.header("referer") || null;
+    var dest = req.body.dest || getSafeReferrer(req) || null;
     dest = dest && dest.match(/login|logout/) ? null : dest;
 
     if (typeof name !== "string" || typeof password !== "string") {
@@ -35,9 +54,10 @@ function handleLogin(req, res) {
     }
 
     var host = req.hostname;
+    // TODO: remove this check from /login, make it generic middleware
     if (host.indexOf(Config.get("http.root-domain")) === -1 &&
             Config.get("http.alt-domains").indexOf(host) === -1) {
-        Logger.syslog.log("WARNING: Attempted login from non-approved domain " + host);
+        LOGGER.warn("Attempted login from non-approved domain " + host);
         return res.sendStatus(403);
     }
 
@@ -72,28 +92,16 @@ function handleLogin(req, res) {
                 return;
             }
 
-            if (req.hostname.indexOf(Config.get("http.root-domain")) >= 0) {
-                // Prevent non-root cookie from screwing things up
-                res.clearCookie("auth");
-                res.cookie("auth", auth, {
-                    domain: Config.get("http.root-domain-dotted"),
-                    expires: expiration,
-                    httpOnly: true,
-                    signed: true
-                });
-            } else {
-                res.cookie("auth", auth, {
-                    expires: expiration,
-                    httpOnly: true,
-                    signed: true
-                });
-            }
+            webserver.setAuthCookie(req, res, expiration, auth);
 
             if (dest) {
                 res.redirect(dest);
             } else {
-                res.user = user;
-                sendPug(res, "login", {});
+                sendPug(res, "login", {
+                    loggedIn: true,
+                    loginName: user.name,
+                    superadmin: user.global_rank >= 255
+                });
             }
         });
     });
@@ -103,17 +111,13 @@ function handleLogin(req, res) {
  * Handles a GET request for /login
  */
 function handleLoginPage(req, res) {
-    if (webserver.redirectHttps(req, res)) {
-        return;
-    }
-
-    if (req.user) {
+    if (res.locals.loggedIn) {
         return sendPug(res, "login", {
             wasAlreadyLoggedIn: true
         });
     }
 
-    var redirect = req.query.dest || req.header("referer");
+    var redirect = getSafeReferrer(req);
     var locals = {};
     if (!/\/register/.test(redirect)) {
         locals.redirect = redirect;
@@ -129,9 +133,9 @@ function handleLogout(req, res) {
     csrf.verify(req);
 
     res.clearCookie("auth");
-    req.user = res.user = null;
+    res.locals.loggedIn = res.locals.loginName = res.locals.superadmin = false;
     // Try to find an appropriate redirect
-    var dest = req.body.dest || req.header("referer");
+    var dest = req.body.dest || getSafeReferrer(req);
     dest = dest && dest.match(/login|logout|account/) ? null : dest;
 
     var host = req.hostname;
@@ -150,11 +154,7 @@ function handleLogout(req, res) {
  * Handles a GET request for /register
  */
 function handleRegisterPage(req, res) {
-    if (webserver.redirectHttps(req, res)) {
-        return;
-    }
-
-    if (req.user) {
+    if (res.locals.loggedIn) {
         sendPug(res, "register", {});
         return;
     }

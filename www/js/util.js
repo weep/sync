@@ -25,37 +25,37 @@ function makeAlert(title, text, klass, textOnly) {
 function formatURL(data) {
     switch(data.type) {
         case "yt":
-            return "http://youtube.com/watch?v=" + data.id;
+            return "https://youtube.com/watch?v=" + data.id;
         case "vi":
-            return "http://vimeo.com/" + data.id;
+            return "https://vimeo.com/" + data.id;
         case "dm":
-            return "http://dailymotion.com/video/" + data.id;
-        case "vm":
-            return "https://vid.me/" + data.id;
+            return "https://dailymotion.com/video/" + data.id;
         case "sc":
             return data.id;
         case "li":
-            return "http://livestream.com/" + data.id;
+            return "https://livestream.com/" + data.id;
         case "tw":
-            return "http://twitch.tv/" + data.id;
+            return "https://twitch.tv/" + data.id;
         case "rt":
             return data.id;
-        case "jw":
-            return data.id;
         case "im":
-            return "http://imgur.com/a/" + data.id;
+            return "https://imgur.com/a/" + data.id;
         case "us":
-            return "http://ustream.tv/" + data.id;
+            return "https://ustream.tv/channel/" + data.id;
         case "gd":
             return "https://docs.google.com/file/d/" + data.id;
         case "fi":
             return data.id;
         case "hb":
-            return "http://hitbox.tv/" + data.id;
+            return "https://www.smashcast.tv/" + data.id;
         case "hl":
             return data.id;
         case "sb":
             return "https://streamable.com/" + data.id;
+        case "tc":
+            return "https://clips.twitch.tv/" + data.id;
+        case "cm":
+            return data.id;
         default:
             return "#";
     }
@@ -87,7 +87,6 @@ function formatUserlistItem(div) {
         profile: div.data("profile") || { image: "", text: ""},
         leader: div.data("leader") || false,
         icon: div.data("icon") || false,
-        afk: div.data("afk") || false
     };
     var name = $(div.children()[1]);
     name.removeClass();
@@ -95,19 +94,20 @@ function formatUserlistItem(div) {
     name.addClass(getNameColor(data.rank));
     div.find(".profile-box").remove();
 
-    if (data.afk) {
+    var meta = div.data().meta || {}; // Not sure how this could happen.
+    if (meta.afk) {
         div.addClass("userlist_afk");
     } else {
         div.removeClass("userlist_afk");
     }
 
-    if (div.data("meta") && div.data("meta").muted) {
+    if (meta.muted) {
         div.addClass("userlist_muted");
     } else {
         div.removeClass("userlist_muted");
     }
 
-    if (div.data("meta") && div.data("meta").smuted) {
+    if (meta.smuted) {
         div.addClass("userlist_smuted");
     } else {
         div.removeClass("userlist_smuted");
@@ -173,7 +173,7 @@ function formatUserlistItem(div) {
     if(data.leader) {
         $("<span/>").addClass("glyphicon glyphicon-star-empty").appendTo(icon);
     }
-    if(data.afk) {
+    if(div.data().meta.afk) {
         name.css("font-style", "italic");
         $("<span/>").addClass("glyphicon glyphicon-time").appendTo(icon);
     }
@@ -398,7 +398,7 @@ function calcUserBreakdown() {
 
         total++;
 
-        if($(item).data("afk"))
+        if($(item).data().meta.afk)
             breakdown["AFK"]++;
     });
 
@@ -660,7 +660,6 @@ function saveUserOptions() {
     USEROPTS.layout               = $("#us-layout").val();
     USEROPTS.ignore_channelcss    = $("#us-no-channelcss").prop("checked");
     USEROPTS.ignore_channeljs     = $("#us-no-channeljs").prop("checked");
-    USEROPTS.secure_connection    = $("#us-ssl").prop("checked");
 
     USEROPTS.synch                = $("#us-synch").prop("checked");
     USEROPTS.sync_accuracy        = parseFloat($("#us-synch-accuracy").val()) || 2;
@@ -789,6 +788,7 @@ function showPollMenu() {
     $("<strong/>").text("Title").appendTo(menu);
 
     var title = $("<input/>").addClass("form-control")
+        .attr("maxlength", "255")
         .attr("type", "text")
         .appendTo(menu);
 
@@ -820,6 +820,7 @@ function showPollMenu() {
     function addOption() {
         $("<input/>").addClass("form-control")
             .attr("type", "text")
+            .attr("maxlength", "255")
             .addClass("poll-menu-option")
             .insertBefore(addbtn);
     }
@@ -859,8 +860,16 @@ function showPollMenu() {
                 opts: opts,
                 obscured: hidden.prop("checked"),
                 timeout: t
+            }, function ack(result) {
+                if (result.error) {
+                    modalAlert({
+                        title: 'Error creating poll',
+                        textContent: result.error.message
+                    });
+                } else {
+                    menu.remove();
+                }
             });
-            menu.remove();
         });
 }
 
@@ -934,24 +943,10 @@ function handleModPermissions() {
     $("#cs-torbanned").prop("checked", CHANNEL.opts.torbanned);
     $("#cs-allow_ascii_control").prop("checked", CHANNEL.opts.allow_ascii_control);
     $("#cs-playlist_max_per_user").val(CHANNEL.opts.playlist_max_per_user || 0);
+    $("#cs-playlist_max_duration_per_user").val(formatTime(CHANNEL.opts.playlist_max_duration_per_user));
     $("#cs-new_user_chat_delay").val(formatTime(CHANNEL.opts.new_user_chat_delay || 0));
     $("#cs-new_user_chat_link_delay").val(formatTime(CHANNEL.opts.new_user_chat_link_delay || 0));
-    (function() {
-        if(typeof CHANNEL.opts.maxlength != "number") {
-            $("#cs-maxlength").val("");
-            return;
-        }
-        var h = parseInt(CHANNEL.opts.maxlength / 3600);
-        h = ""+h;
-        if(h.length < 2) h = "0" + h;
-        var m = parseInt((CHANNEL.opts.maxlength % 3600) / 60);
-        m = ""+m;
-        if(m.length < 2) m = "0" + m;
-        var s = parseInt(CHANNEL.opts.maxlength % 60);
-        s = ""+s;
-        if(s.length < 2) s = "0" + s;
-        $("#cs-maxlength").val(h + ":" + m + ":" + s);
-    })();
+    $("#cs-maxlength").val(formatTime(CHANNEL.opts.maxlength));
     $("#cs-csstext").val(CHANNEL.css);
     $("#cs-jstext").val(CHANNEL.js);
     $("#cs-motdtext").val(CHANNEL.motd);
@@ -1088,12 +1083,13 @@ function clearSearchResults() {
     }
 }
 
-function addLibraryButtons(li, id, source) {
+function addLibraryButtons(li, item, source) {
     var btns = $("<div/>").addClass("btn-group")
         .addClass("pull-left")
         .prependTo(li);
 
-    var type = (source === "library") ? "lib" : source;
+    var id = item.id;
+    var type = item.type;
 
     if(hasPermission("playlistadd")) {
         if(hasPermission("playlistnext")) {
@@ -1192,12 +1188,13 @@ AsyncQueue.prototype.reset = function () {
 var PL_ACTION_QUEUE = new AsyncQueue();
 
 // Because jQuery UI does weird things
+// 2017-03-26: Does it really though?  I have no idea if this is still needed.
 function playlistFind(uid) {
     var children = document.getElementById("queue").children;
     for(var i in children) {
-        if(typeof children[i].getAttribute != "function")
+        if(typeof children[i].className != "string")
             continue;
-        if(children[i].getAttribute("class").indexOf("pluid-" + uid) != -1)
+        if(children[i].className.split(" ").indexOf("pluid-" + uid) > 0)
             return children[i];
     }
     return false;
@@ -1260,13 +1257,6 @@ function parseMediaLink(url) {
     url = url.trim();
     url = url.replace("feature=player_embedded&", "");
 
-    if(url.indexOf("jw:") == 0) {
-        return {
-            id: url.substring(3),
-            type: "fi"
-        };
-    }
-
     if(url.indexOf("rtmp://") == 0) {
         return {
             id: url,
@@ -1296,9 +1286,28 @@ function parseMediaLink(url) {
         };
     }
 
+    if ((m = url.match(/clips\.twitch\.tv\/([A-Za-z]+)/))) {
+        return {
+            id: m[1],
+            type: "tc"
+        };
+    }
+
     if((m = url.match(/twitch\.tv\/(?:.*?)\/([cv])\/(\d+)/))) {
         return {
             id: m[1] + m[2],
+            type: "tv"
+        };
+    }
+
+    /**
+     * 2017-02-23
+     * Twitch changed their URL pattern for recorded videos, apparently.
+     * https://github.com/calzoneman/sync/issues/646
+     */
+    if((m = url.match(/twitch\.tv\/videos\/(\d+)/))) {
+        return {
+            id: "v" + m[1],
             type: "tv"
         };
     }
@@ -1324,7 +1333,7 @@ function parseMediaLink(url) {
         };
     }
 
-    if ((m = url.match(/hitbox\.tv\/([^\?&#]+)/))) {
+    if ((m = url.match(/(?:hitbox|smashcast)\.tv\/([^\?&#]+)/))) {
         return {
             id: m[1],
             type: "hb"
@@ -1359,22 +1368,16 @@ function parseMediaLink(url) {
         };
     }
 
-    if ((m = url.match(/(?:docs|drive)\.google\.com\/file\/d\/([^\/]*)/)) ||
-        (m = url.match(/drive\.google\.com\/open\?id=([^&]*)/))) {
+    if ((m = url.match(/(?:docs|drive)\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/)) ||
+        (m = url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/))) {
         return {
             id: m[1],
             type: "gd"
         };
     }
 
-    if ((m = url.match(/plus\.google\.com\/(?:u\/\d+\/)?photos\/(\d+)\/albums\/(\d+)\/(\d+)/))) {
-        return {
-            id: m[1] + "_" + m[2] + "_" + m[3],
-            type: "gp"
-        };
-    }
-
-    if((m = url.match(/vid\.me\/([\w-]+)/))) {
+    if ((m = url.match(/vid\.me\/embedded\/([\w-]+)/)) ||
+        (m = url.match(/vid\.me\/([\w-]+)/))) {
         return {
             id: m[1],
             type: "vm"
@@ -1396,13 +1399,6 @@ function parseMediaLink(url) {
     }
 
     /*  Shorthand URIs  */
-    // To catch Google Plus by ID alone
-    if ((m = url.match(/^(?:gp:)?(\d{21}_\d{19}_\d{19})/))) {
-        return {
-            id: m[1],
-            type: "gp"
-        };
-    }
     // So we still trim DailyMotion URLs
     if((m = url.match(/^dm:([^\?&#_]+)/))) {
         return {
@@ -1415,6 +1411,12 @@ function parseMediaLink(url) {
         return {
             id: m[1],
             type: "fi"
+        };
+    }
+    if ((m = url.match(/^cm:(.*)/))) {
+        return {
+            id: m[1],
+            type: "cm"
         };
     }
     // Generic for the rest.
@@ -1434,6 +1436,11 @@ function parseMediaLink(url) {
                 msg: "Raw files must begin with 'https'.  Plain http is not supported."
             });
             throw new Error("ERROR_QUEUE_HTTP");
+        } else if (tmp.match(/\.json$/)) {
+            return {
+                id: url,
+                type: "cm"
+            };
         } else if (tmp.match(/\.(mp4|flv|webm|og[gv]|mp3|mov|m4a)$/)) {
             return {
                 id: url,
@@ -1858,6 +1865,7 @@ function handleWindowResize() {
     } else {
         handleVideoResize();
     }
+    scrollChat();
 }
 
 function handleVideoResize() {
@@ -1888,9 +1896,6 @@ handleWindowResize();
 function removeVideo(event) {
     try {
         PLAYER.setVolume(0);
-        if (PLAYER.type === "rv") {
-            killVideoUntilItIsDead($(PLAYER.player));
-        }
     } catch (e) {
     }
 
@@ -1986,6 +1991,7 @@ function genPermissionsEditor() {
     makeOption("Embed custom media", "playlistaddcustom", standard, CHANNEL.perms.playlistaddcustom + "");
     makeOption("Add raw video file", "playlistaddrawfile", standard, CHANNEL.perms.playlistaddrawfile + "");
     makeOption("Exceed maximum media length", "exceedmaxlength", standard, CHANNEL.perms.exceedmaxlength+"");
+    makeOption("Exceed maximum total media length", "exceedmaxdurationperuser", standard, CHANNEL.perms.exceedmaxdurationperuser+"");
     makeOption("Exceed maximum number of videos per user", "exceedmaxitems", standard, CHANNEL.perms.exceedmaxitems+"");
     makeOption("Add nontemporary media", "addnontemp", standard, CHANNEL.perms.addnontemp+"");
     makeOption("Temp/untemp playlist item", "settemp", standard, CHANNEL.perms.settemp+"");
@@ -2097,6 +2103,11 @@ function errDialog(err) {
  * 2016-12-08
  * I *promise* that one day I will actually split this file into submodules
  * -cal
+ */
+
+/**
+ * modalAlert accepts options { title, textContent, htmlContent }
+ * All are optional
  */
 function modalAlert(options) {
     if (typeof options !== "object" || options === null) {
@@ -2636,11 +2647,27 @@ function formatUserPlaylistList() {
 }
 
 function loadEmotes(data) {
+    function sanitizeText(str) {
+        str = str.replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;");
+        return str;
+    }
+
     CHANNEL.emotes = [];
+    CHANNEL.emoteMap = {};
+    CHANNEL.badEmotes = [];
     data.forEach(function (e) {
         if (e.image && e.name) {
             e.regex = new RegExp(e.source, "gi");
             CHANNEL.emotes.push(e);
+            if (/\s/g.test(e.name)) {
+                // Emotes with spaces can't be hashmapped
+                CHANNEL.badEmotes.push(e);
+            } else {
+                CHANNEL.emoteMap[sanitizeText(e.name)] = e;
+            }
         } else {
             console.error("Rejecting invalid emote: " + JSON.stringify(e));
         }
@@ -2652,11 +2679,31 @@ function execEmotes(msg) {
         return msg;
     }
 
+    if (CyTube.featureFlag && CyTube.featureFlag.efficientEmotes) {
+        return execEmotesEfficient(msg);
+    }
+
     CHANNEL.emotes.forEach(function (e) {
         msg = msg.replace(e.regex, '$1<img class="channel-emote" src="' +
                                    e.image + '" title="' + e.name + '">');
     });
 
+    return msg;
+}
+
+function execEmotesEfficient(msg) {
+    CHANNEL.badEmotes.forEach(function (e) {
+        msg = msg.replace(e.regex, '$1<img class="channel-emote" src="' +
+                          e.image + '" title="' + e.name + '">');
+    });
+    msg = msg.replace(/[^\s]+/g, function (m) {
+        if (CHANNEL.emoteMap.hasOwnProperty(m)) {
+            var e = CHANNEL.emoteMap[m];
+            return '<img class="channel-emote" src="' + e.image + '" title="' + e.name + '">';
+        } else {
+            return m;
+        }
+    });
     return msg;
 }
 
@@ -2731,32 +2778,6 @@ function initPm(user) {
     });
 
     return pm;
-}
-
-function killVideoUntilItIsDead(video) {
-    try {
-        video[0].volume = 0;
-        video[0].muted = true;
-        video.attr("src", "");
-        video.remove();
-    } catch (e) {
-    }
-}
-
-function fallbackRaw(data) {
-    $("<div/>").insertBefore($("#ytapiplayer")).attr("id", "ytapiplayer");
-    $("video").each(function () {
-        killVideoUntilItIsDead($(this));
-    });
-    $("audio").each(function () {
-        killVideoUntilItIsDead($(this));
-    });
-    data.type = "fl";
-    data.url = data.direct.sd.url;
-    PLAYER.player = undefined;
-    PLAYER = new FlashPlayer(data);
-
-    handleMediaUpdate(data);
 }
 
 function checkScriptAccess(source, type, cb) {
@@ -2890,88 +2911,6 @@ function formatScriptAccessPrefs() {
                 tr.remove();
             });
     });
-}
-
-/*
-    VIMEO SIMULATOR 2014
-
-    Vimeo decided to block my domain.  After repeated emails, they refused to
-    unblock it.  Rather than give in to their demands, there is a serverside
-    option which extracts direct links to the h264 encoded MP4 video files.
-    These files can be loaded in a custom player to allow Vimeo playback without
-    triggering their dumb API domain block.
-
-    It's a little bit hacky, but my only other option is to keep buying new
-    domains every time one gets blocked.  No thanks to Vimeo, who were of no help
-    and unwilling to compromise on the issue.
-*/
-function vimeoSimulator2014(data) {
-    /* Vimeo Simulator uses the raw file player */
-    data.type = "fi";
-
-    /* Convert youtube-style quality key to vimeo workaround quality */
-    var q = {
-        small: "mobile",
-        medium: "sd",
-        large: "sd",
-        hd720: "hd",
-        hd1080:"hd",
-        highres: "hd"
-    }[USEROPTS.default_quality] || "sd";
-
-    var fallback = {
-        hd: "sd",
-        sd: "mobile",
-        mobile: false
-    };
-
-    /* Pick highest quality less than or equal to user's preference from the options */
-    while (!(q in data.meta.direct) && q != false) {
-        q = fallback[q];
-    }
-    if (!q) {
-        q = "sd";
-    }
-
-    data.url = data.meta.direct[q].url;
-    return data;
-}
-
-function googlePlusSimulator2014(data) {
-    /* Google+ Simulator uses the raw file player */
-    data.type = "fi";
-
-    if (!data.meta.gpdirect) {
-        data.url = "";
-        return data;
-    }
-
-    /* Convert youtube-style quality key to vimeo workaround quality */
-    var q = USEROPTS.default_quality || "auto";
-    if (q === "highres") {
-        q = "hd1080";
-    }
-
-    var fallbacks = ["hd1080", "hd720", "large", "medium", "small"];
-    var i = fallbacks.indexOf(q);
-    if (i < 0) {
-        i = fallbacks.indexOf("medium");
-    }
-
-    while (!(q in data.meta.gpdirect) && i < fallbacks.length) {
-        q = fallbacks[i++];
-    }
-
-    if (i === fallbacks.length) {
-        var hasCodecs = Object.keys(data.meta.gpdirect);
-        if (hasCodecs.length > 0) {
-            q = hasCodecs[0];
-        }
-    }
-
-    data.url = data.meta.gpdirect[q].url;
-    data.contentType = data.meta.gpdirect[q].contentType;
-    return data;
 }
 
 function EmoteList(selector, emoteClickCallback) {
@@ -3124,7 +3063,7 @@ CSEmoteList.prototype.loadPage = function (page) {
         var row = document.createElement("tr");
         tbody.appendChild(row);
 
-        (function (emote) {
+        (function (emote, row) {
             // Add delete button
             var tdDelete = document.createElement("td");
             var btnDelete = document.createElement("button");
@@ -3142,12 +3081,66 @@ CSEmoteList.prototype.loadPage = function (page) {
             };
 
             // Add emote name
-            // TODO: editable
             var tdName = document.createElement("td");
             var nameDisplay = document.createElement("code");
             nameDisplay.textContent = emote.name;
             tdName.appendChild(nameDisplay);
             row.appendChild(tdName);
+
+            var $nameDisplay = $(nameDisplay);
+            $nameDisplay.click(function (clickEvent) {
+                $nameDisplay.detach();
+
+                var editInput = document.createElement("input");
+                editInput.className = "form-control";
+                editInput.type = "text";
+                editInput.value = emote.name;
+                tdName.appendChild(editInput);
+                editInput.focus();
+
+                function save() {
+                    var val = editInput.value;
+                    tdName.removeChild(editInput);
+                    tdName.appendChild(nameDisplay);
+
+                    // Nothing was changed
+                    if(val === emote.name){ return }
+
+                    // Emote name already exists
+                    if( CHANNEL.emotes.filter(function(emote){ return emote.name === val }).length ){
+                        /*
+                         * Since we are already in a modal
+                         *  and Bootstrap doesn't have supermodals
+                         *   we will make a self destructing warning
+                         *    as a row in the table
+                         */
+                        var wrow = document.createElement("tr");
+                        var tdBlankDel = document.createElement("td"); wrow.appendChild(tdBlankDel);
+                        var tdWarnMess = document.createElement("td"); wrow.appendChild(tdWarnMess);
+                        var warnSpan = document.createElement("p"); tdWarnMess.appendChild(warnSpan);
+                        warnSpan.className = "text-warning";
+                        warnSpan.textContent = "An emote of that name already exists.";
+                        tdWarnMess.colSpan = "2";
+
+                        row.insertAdjacentElement("beforebegin", wrow)
+                        $(wrow).delay(2500).fadeOut('slow', function(){ $(this).remove() });
+
+                        return;
+                    }
+                    socket.emit("renameEmote", {
+                        old: emote.name,
+                        image: emote.image,
+                        name: val
+                    });
+                }
+
+                editInput.onblur = save;
+                editInput.onkeyup = function (event) {
+                    if (event.keyCode === 13) {
+                        save();
+                    }
+                };
+            });
 
             // Add emote image
             var tdImage = document.createElement("td");
@@ -3194,7 +3187,7 @@ CSEmoteList.prototype.loadPage = function (page) {
                     }
                 };
             });
-        })(this.emotes[i]);
+        })(this.emotes[i], row);
     }
 };
 
@@ -3233,6 +3226,13 @@ function startQueueSpinner(data) {
 }
 
 function stopQueueSpinner(data) {
+    // TODO: this is a temp hack, need to replace media ID check with
+    // a passthrough request ID (since media ID from API is not necessarily
+    // the same as the URL "ID" from the user)
+    if (data && data.type === "us") {
+        data = { id: data.title.match(/Ustream.tv - (.*)/)[1] };
+    }
+
     var shouldRemove = (data !== null &&
                         typeof data === 'object' &&
                         $("#queueprogress").data("queue-id") === data.id);
@@ -3252,11 +3252,15 @@ function maybePromptToUpgradeUserscript() {
         return;
     }
 
-    var currentVersion = [1, 3];
+    var currentVersion = GS_VERSION.toString(); // data.js
     var userscriptVersion = window.driveUserscriptVersion;
     if (!userscriptVersion) {
         userscriptVersion = '1.0';
     }
+
+    currentVersion = currentVersion.split('.').map(function (part) {
+        return parseInt(part, 10);
+    });
     userscriptVersion = userscriptVersion.split('.').map(function (part) {
         return parseInt(part, 10);
     });

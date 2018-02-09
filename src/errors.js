@@ -7,3 +7,5 @@ export const CSRFError = createError('CSRFError');
 export const HTTPError = createError('HTTPError', {
     status: HTTPStatus.INTERNAL_SERVER_ERROR
 });
+export const ValidationError = createError('ValidationError');
+export const InvalidRequestError = createError('InvalidRequestError');

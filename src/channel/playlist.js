@@ -6,9 +6,13 @@ var InfoGetter = require("../get-info");
 var Config = require("../config");
 var Flags = require("../flags");
 var db = require("../database");
-var Logger = require("../logger");
 var CustomEmbedFilter = require("../customembed").filter;
 var XSS = require("../xss");
+import counters from '../counters';
+import { Counter } from 'prom-client';
+import * as Switches from '../switches';
+
+const LOGGER = require('@calzoneman/jsli')('playlist');
 
 const MAX_ITEMS = Config.get("playlist.max-items");
 // Limit requestPlaylist to once per 60 seconds
@@ -104,19 +108,49 @@ function PlaylistModule(channel) {
         this.channel.modules.chat.registerCommand("/clean", this.handleClean.bind(this));
         this.channel.modules.chat.registerCommand("/cleantitle", this.handleClean.bind(this));
     }
+
+    this.supportsDirtyCheck = true;
+    this._positionDirty = false;
+    this._listDirty = false;
 }
 
 PlaylistModule.prototype = Object.create(ChannelModule.prototype);
 
+Object.defineProperty(PlaylistModule.prototype, "dirty", {
+    get() {
+        return this._positionDirty || this._listDirty || !Switches.isActive("plDirtyCheck");
+    },
+
+    set(val) {
+        this._positionDirty = this._listDirty = val;
+    }
+});
+
 PlaylistModule.prototype.load = function (data) {
     var self = this;
-    var playlist = data.playlist;
-    if (typeof playlist !== "object" || !("pl" in playlist)) {
+    let { playlist, playlistPosition } = data;
+
+    if (typeof playlist !== "object") {
         return;
     }
 
-    var i = 0;
-    playlist.pos = parseInt(playlist.pos);
+    if (!playlist.hasOwnProperty("pl")) {
+        LOGGER.warn(
+            "Bad playlist for channel %s",
+            self.channel.uniqueName
+        );
+        return;
+    }
+
+    if (!playlistPosition || !playlist.externalPosition) {
+        // Old style playlist
+        playlistPosition = {
+            index: playlist.pos,
+            time: playlist.time
+        };
+    }
+
+    let i = 0;
     playlist.pl.forEach(function (item) {
         if (item.media.type === "cu" && item.media.id.indexOf("cu:") !== 0) {
             try {
@@ -124,8 +158,16 @@ PlaylistModule.prototype.load = function (data) {
             } catch (e) {
                 return;
             }
-        } else if (item.media.type === "gd" || item.media.type === "gp") {
+        } else if (item.media.type === "gd") {
             delete item.media.meta.gpdirect;
+        } else if (["vm", "jw"].includes(item.media.type)) {
+            // JW has been deprecated for a long time
+            // VM shut down in December 2017
+            LOGGER.warn(
+                "Dropping playlist item with deprecated type %s",
+                item.media.type
+            );
+            return;
         }
 
         var m = new Media(item.media.id, item.media.title, item.media.seconds,
@@ -139,24 +181,26 @@ PlaylistModule.prototype.load = function (data) {
         self.items.append(newitem);
         self.meta.count++;
         self.meta.rawTime += m.seconds;
-        if (playlist.pos === i) {
+        if (playlistPosition.index === i) {
             self.current = newitem;
         }
         i++;
     });
 
+    // Sanity check, in case the current item happened to be deleted by
+    // one of the checks above
+    if (!self.current && self.meta.count > 0) {
+        self.current = self.items.first;
+        playlistPosition.time = -3;
+    }
+
     self.meta.time = util.formatTime(self.meta.rawTime);
-    self.startPlayback(playlist.time);
+    self.startPlayback(playlistPosition.time);
+    self.dirty = false;
 };
 
 PlaylistModule.prototype.save = function (data) {
-    var arr = this.items.toArray().map(function (item) {
-        /* Clear Google Docs/Google+ and Vimeo meta */
-        if (item.media && item.media.meta) {
-            delete item.media.meta.direct;
-        }
-        return item;
-    });
+    var arr = this.items.toArray();
     var pos = 0;
     for (var i = 0; i < arr.length; i++) {
         if (this.current && arr[i].uid == this.current.uid) {
@@ -170,11 +214,18 @@ PlaylistModule.prototype.save = function (data) {
         time = this.current.media.currentTime;
     }
 
-    data.playlist = {
-        pl: arr,
-        pos: pos,
-        time: time
-    };
+    if (Switches.isActive("plDirtyCheck")) {
+        data.playlistPosition = {
+            index: pos,
+            time
+        };
+
+        if (this._listDirty) {
+            data.playlist = { pl: arr, pos, time, externalPosition: true };
+        }
+    } else {
+        data.playlist = { pl: arr, pos, time };
+    }
 };
 
 PlaylistModule.prototype.unload = function () {
@@ -224,7 +275,7 @@ PlaylistModule.prototype.onUserPostJoin = function (user) {
         self.sendChangeMedia([user]);
     });
     user.socket.on("requestPlaylist", this.handleRequestPlaylist.bind(this, user));
-    user.on("login", function () {
+    user.waitFlag(Flags.U_HAS_CHANNEL_RANK, function () {
         self.sendPlaylist([user]);
     });
     user.socket.on("clearPlaylist", this.handleClear.bind(this, user));
@@ -285,6 +336,11 @@ PlaylistModule.prototype.sendPlaylist = function (users) {
     });
 };
 
+const changeMediaCounter = new Counter({
+    name: 'cytube_playlist_plays_total',
+    help: 'Counter for number of playlist items played',
+    labelNames: ['shortCode']
+});
 PlaylistModule.prototype.sendChangeMedia = function (users) {
     if (!this.current || !this.current.media || this._refreshing) {
         return;
@@ -299,6 +355,7 @@ PlaylistModule.prototype.sendChangeMedia = function (users) {
         var m = this.current.media;
         this.channel.logger.log("[playlist] Now playing: " + m.title +
                                 " (" + m.type + ":" + m.id + ")");
+        changeMediaCounter.labels(m.type).inc(1, new Date());
     } else {
         users.forEach(function (u) {
             u.socket.emit("setCurrent", uid);
@@ -333,6 +390,10 @@ PlaylistModule.prototype.handleQueue = function (user, data) {
 
     var id = data.id;
     var type = data.type;
+    if (type === "lib") {
+        LOGGER.warn("Outdated client: IP %s emitting queue with type=lib",
+                user.realip);
+    }
 
     if (data.pos !== "next" && data.pos !== "end") {
         return;
@@ -379,7 +440,7 @@ PlaylistModule.prototype.handleQueue = function (user, data) {
             id: id
         });
         return;
-    } else if (type === "fi" && !perms.canAddRawFile(user)) {
+    } else if ((type === "fi" || type === "cm") && !perms.canAddRawFile(user)) {
         user.socket.emit("queueFail", {
             msg: "You don't have permission to add raw video files",
             link: link,
@@ -392,11 +453,6 @@ PlaylistModule.prototype.handleQueue = function (user, data) {
     var queueby = user.getName();
 
     var duration = undefined;
-    /**
-     * Duration can optionally be specified for a livestream.
-     * The UI for it only shows up for jw: queues, but it is
-     * accepted for any live media
-     */
     if (util.isLive(type) && typeof data.duration === "number") {
         duration = !isNaN(data.duration) ? data.duration : undefined;
     }
@@ -460,36 +516,25 @@ PlaylistModule.prototype.queueStandard = function (user, data) {
 
     const self = this;
     this.channel.refCounter.ref("PlaylistModule::queueStandard");
+    counters.add("playlist:queue:count", 1);
     this.semaphore.queue(function (lock) {
         var lib = self.channel.modules.library;
         if (lib && self.channel.is(Flags.C_REGISTERED) && !util.isLive(data.type)) {
+            // TODO: remove this check entirely once metrics are collected.
             lib.getItem(data.id, function (err, item) {
                 if (err && err !== "Item not in library") {
-                    error(err+"");
-                    self.channel.refCounter.unref("PlaylistModule::queueStandard");
-                    return lock.release();
-                }
-
-                // YouTube livestreams transition to becoming regular videos,
-                // breaking the cached duration of 0.
-                // In the future, the media cache should be decoupled from
-                // the library and this will no longer be an issue, but for now
-                // treat 0-length yt library entries as non-existent.
-                if (item !== null && item.type === "yt" && item.seconds === 0) {
-                    data.type = "yt"; // Kludge -- library queue has type: "lib"
-                    item = null;
-                }
-
-                if (item !== null) {
-                    /* Don't re-cache data we got from the library */
-                    data.shouldAddToLibrary = false;
-                    self._addItem(item, data, user, function () {
-                        lock.release();
-                        self.channel.refCounter.unref("PlaylistModule::queueStandard");
-                    });
+                    LOGGER.error("Failed to query for library item: %s", String(err));
+                } else if (err === "Item not in library") {
+                    counters.add("playlist:queue:library:miss", 1);
                 } else {
-                    handleLookup();
+                    // temp hack until all clients are updated.
+                    // previously, library search results would queue with
+                    // type "lib"; this has now been changed.
+                    data.type = item.type;
+                    counters.add("playlist:queue:library:hit", 1);
                 }
+
+                handleLookup();
             });
         } else {
             handleLookup();
@@ -594,6 +639,7 @@ PlaylistModule.prototype.handleSetTemp = function (user, data) {
 
     item.temp = data.temp;
     this.channel.broadcastAll("setTemp", data);
+    this._listDirty = true;
 
     if (!data.temp && this.channel.modules.library) {
         this.channel.modules.library.cacheMedia(item.media);
@@ -642,6 +688,7 @@ PlaylistModule.prototype.handleMoveMedia = function (user, data) {
         self.channel.logger.log("[playlist] " + user.getName() + " moved " +
                                 from.media.title +
                                 (after ? " after " + after.media.title : ""));
+        self._listDirty = true;
         lock.release();
         self.channel.refCounter.unref("PlaylistModule::handleMoveMedia");
     });
@@ -707,6 +754,8 @@ PlaylistModule.prototype.handleClear = function (user) {
 
     this.channel.broadcastAll("playlist", []);
     this.channel.broadcastAll("setPlaylistMeta", this.meta);
+    this._listDirty = true;
+    this._positionDirty = true;
 };
 
 PlaylistModule.prototype.handleShuffle = function (user) {
@@ -730,6 +779,8 @@ PlaylistModule.prototype.handleShuffle = function (user) {
         this.items.append(item);
         pl.splice(i, 1);
     }
+    this._listDirty = true;
+    this._positionDirty = true;
 
     this.current = this.items.first;
     pl = this.items.toArray(true);
@@ -757,7 +808,7 @@ PlaylistModule.prototype.handleAssignLeader = function (user, data) {
         this.leader = null;
         if (old.account.effectiveRank === 1.5) {
             old.account.effectiveRank = old.account.oldRank;
-            old.emit("effectiveRankChange", old.account.effectiveRank);
+            old.emit("effectiveRankChange", old.account.effectiveRank, 1.5);
             old.socket.emit("rank", old.account.effectiveRank);
         }
 
@@ -784,7 +835,7 @@ PlaylistModule.prototype.handleAssignLeader = function (user, data) {
             if (this.leader.account.effectiveRank < 1.5) {
                 this.leader.account.oldRank = this.leader.account.effectiveRank;
                 this.leader.account.effectiveRank = 1.5;
-                this.leader.emit("effectiveRankChange", 1.5);
+                this.leader.emit("effectiveRankChange", 1.5, this.leader.account.oldRank);
                 this.leader.socket.emit("rank", 1.5);
             }
 
@@ -819,7 +870,7 @@ PlaylistModule.prototype.handleUpdate = function (user, data) {
     }
 
     var media = this.current.media;
-    if (util.isLive(media.type) && media.type !== "jw") {
+    if (util.isLive(media.type)) {
         return;
     }
 
@@ -830,6 +881,7 @@ PlaylistModule.prototype.handleUpdate = function (user, data) {
     media.currentTime = data.currentTime;
     media.paused = Boolean(data.paused);
     var update = media.getTimeUpdate();
+    this._positionDirty = true;
 
     this.channel.broadcastAll("mediaUpdate", update);
 };
@@ -868,6 +920,8 @@ PlaylistModule.prototype._delete = function (uid) {
         self.current = next;
         self.startPlayback();
     }
+
+    self._listDirty = true;
 
     return success;
 };
@@ -922,32 +976,22 @@ PlaylistModule.prototype._addItem = function (media, data, user, cb) {
         }
     }
 
+    if (this.channel.modules.options &&
+        this.channel.modules.options.get("playlist_max_duration_per_user") > 0) {
+
+        const limit = this.channel.modules.options.get("playlist_max_duration_per_user");
+        const totalDuration = usersItems.map(item => item.media.seconds).reduce((a, b) => a + b, 0) + media.seconds;
+        if (isNaN(totalDuration)) {
+            LOGGER.error("playlist_max_duration_per_user check calculated NaN: " + require('util').inspect(usersItems));
+        } else if (totalDuration >= limit && !this.channel.modules.permissions.canExceedMaxDurationPerUser(user)) {
+            return qfail("Channel limit exceeded: maximum total playlist time per user");
+        }
+    }
+
     /* Warn about blocked countries */
     if (media.meta.restricted) {
         user.socket.emit("queueWarn", {
             msg: "Video is blocked in the following countries: " + media.meta.restricted,
-            link: data.link
-        });
-    }
-
-    /* Warn about high bitrate for raw files */
-    if (media.type === "fi" && media.meta.bitrate > 1000) {
-        user.socket.emit("queueWarn", {
-            msg: "This video has a bitrate over 1000kbps.  Clients with slow " +
-                 "connections may experience lots of buffering.",
-            link: data.link
-        });
-    }
-
-    /* Warn about possibly unsupported formats */
-    if (media.type === "fi" && media.meta.codec &&
-                               media.meta.codec.indexOf("/") !== -1 &&
-                               media.meta.codec !== "mov/h264" &&
-                               media.meta.codec !== "flv/h264") {
-        user.socket.emit("queueWarn", {
-            msg: "The codec <code>" + media.meta.codec + "</code> is not supported " +
-                 "by all browsers, and is not supported by the flash fallback layer.  " +
-                 "This video may not play for some users.",
             link: data.link
         });
     }
@@ -995,6 +1039,8 @@ PlaylistModule.prototype._addItem = function (media, data, user, cb) {
             self.startPlayback();
         }
 
+        self._listDirty = true;
+
         if (cb) {
             cb();
         }
@@ -1035,6 +1081,7 @@ PlaylistModule.prototype.startPlayback = function (time) {
 
     var media = self.current.media;
     media.reset();
+    self._positionDirty = true;
 
     if (self.leader != null) {
         media.paused = false;
@@ -1113,6 +1160,8 @@ PlaylistModule.prototype._leadLoop = function() {
         return;
     }
 
+    this._positionDirty = true;
+
     var dt = (Date.now() - this._lastUpdate) / 1000.0;
     var t = this.current.media.currentTime;
 
@@ -1169,6 +1218,12 @@ PlaylistModule.prototype.clean = function (test) {
  * == Command Handlers ==
  */
 
+/*
+ * TODO: investigate how many people are relying on regex
+ * capabilities for /clean.  Might be user friendlier to
+ * replace it with a glob matcher (or at least remove the
+ * -flags)
+ */
 function generateTargetRegex(target) {
     const flagsre = /^(-[img]+\s+)/i
     var m = target.match(flagsre);
@@ -1193,7 +1248,15 @@ PlaylistModule.prototype.handleClean = function (user, msg, meta) {
                 "/cleantitle <title>"
         });
     }
-    var target = generateTargetRegex(args.join(" "));
+    var target;
+    try {
+        target = generateTargetRegex(args.join(" "));
+    } catch (error) {
+        user.socket.emit("errorMsg", {
+            msg: `Invalid target: ${args.join(" ")}`
+        });
+        return;
+    }
 
     this.channel.logger.log("[playlist] " + user.getName() + " used " + cmd +
             " with target regex: " + target);
@@ -1344,9 +1407,9 @@ PlaylistModule.prototype.handleQueuePlaylist = function (user, data) {
                 self._addItem(m, qdata, user);
             });
         } catch (e) {
-            Logger.errlog.log("Loading user playlist failed!");
-            Logger.errlog.log("PL: " + user.getName() + "-" + data.name);
-            Logger.errlog.log(e.stack);
+            LOGGER.error("Loading user playlist failed!");
+            LOGGER.error("PL: " + user.getName() + "-" + data.name);
+            LOGGER.error(e.stack);
             user.socket.emit("queueFail", {
                 msg: "Internal error occurred when loading playlist.",
                 link: null

@@ -12,12 +12,14 @@ TYPE_MAP =
     tv: TwitchPlayer
     cu: CustomEmbedPlayer
     rt: RTMPPlayer
-    hb: HitboxPlayer
+    hb: SmashcastPlayer
     us: UstreamPlayer
     im: ImgurPlayer
     vm: VideoJSPlayer
     hl: HLSPlayer
-    sb: VideoJSPlayer
+    sb: StreamablePlayer
+    tc: VideoJSPlayer
+    cm: VideoJSPlayer
 
 window.loadMediaPlayer = (data) ->
     try
@@ -26,7 +28,7 @@ window.loadMediaPlayer = (data) ->
     catch error
         console.error error
 
-    if data.meta.direct and data.type != 'gd'
+    if data.meta.direct and data.type is 'vi'
         try
             window.PLAYER = new VideoJSPlayer(data)
         catch e

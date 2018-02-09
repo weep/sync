@@ -1,4 +1,5 @@
 var CL_VERSION = 3.0;
+var GS_VERSION = 1.7; // Google Drive Userscript
 
 var CLIENT = {
     rank: -1,
@@ -19,7 +20,7 @@ var CHANNEL = {
     css: "",
     js: "",
     motd: "",
-    name: false,
+    name: CHANNELNAME,
     usercount: 0,
     emotes: []
 };
@@ -69,7 +70,12 @@ var SOCKETIO_CONNECT_ERROR_COUNT = 0;
 var HAS_CONNECTED_BEFORE = false;
 var IMAGE_MATCH = /<img\s[^>]*?src\s*=\s*['\"]([^'\"]*?)['\"][^>]*?>/gi;
 var CyTube = {};
-CyTube.ui = {};
+CyTube.ui = {
+    suppressedAnnouncementId: getOpt("suppressed_announcement_id")
+};
+CyTube.featureFlag = {
+    efficientEmotes: true
+};
 
 function getOpt(k) {
     var v = NO_STORAGE ? readCookie(k) : localStorage.getItem(k);
@@ -120,7 +126,6 @@ var USEROPTS = {
     sort_afk             : getOrDefault("sort_afk", false),
     default_quality      : getOrDefault("default_quality", "auto"),
     boop                 : getOrDefault("boop", "never"),
-    secure_connection    : getOrDefault("secure_connection", false),
     show_shadowchat      : getOrDefault("show_shadowchat", false),
     emotelist_sort       : getOrDefault("emotelist_sort", true),
     no_emotes            : getOrDefault("no_emotes", false),
@@ -229,5 +234,3 @@ function eraseCookie(name) {
 
 /* to be implemented in callbacks.js */
 function setupCallbacks() { }
-
-window.enableCyTubeGoogleDriveUserscriptDebug = getOrDefault("cytube_drive_debug", false);

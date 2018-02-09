@@ -15,15 +15,42 @@ var session = require("../session");
 var csrf = require("./csrf");
 const url = require("url");
 
+const LOGGER = require('@calzoneman/jsli')('web/accounts');
+
+let globalMessageBus;
+let emailConfig;
+let emailController;
+
 /**
  * Handles a GET request for /account/edit
  */
 function handleAccountEditPage(req, res) {
-    if (webserver.redirectHttps(req, res)) {
-        return;
+    sendPug(res, "account-edit", {});
+}
+
+function verifyReferrer(req, expected) {
+    const referrer = req.header('referer');
+
+    if (!referrer) {
+        return true;
     }
 
-    sendPug(res, "account-edit", {});
+    try {
+        const parsed = url.parse(referrer);
+
+        if (parsed.pathname !== expected) {
+            LOGGER.warn(
+                'Possible attempted forgery: %s POSTed to %s',
+                referrer,
+                expected
+            );
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        return false;
+    }
 }
 
 /**
@@ -31,6 +58,11 @@ function handleAccountEditPage(req, res) {
  */
 function handleAccountEdit(req, res) {
     csrf.verify(req);
+
+    if (!verifyReferrer(req, '/account/edit')) {
+        res.status(403).send('Mismatched referrer');
+        return;
+    }
 
     var action = req.body.action;
     switch(action) {
@@ -41,7 +73,7 @@ function handleAccountEdit(req, res) {
             handleChangeEmail(req, res);
             break;
         default:
-            res.send(400);
+            res.sendStatus(400);
             break;
     }
 }
@@ -49,7 +81,7 @@ function handleAccountEdit(req, res) {
 /**
  * Handles a request to change the user"s password
  */
-function handleChangePassword(req, res) {
+async function handleChangePassword(req, res) {
     var name = req.body.name;
     var oldpassword = req.body.oldpassword;
     var newpassword = req.body.newpassword;
@@ -68,7 +100,8 @@ function handleChangePassword(req, res) {
         return;
     }
 
-    if (!req.user) {
+    const reqUser = await webserver.authorize(req);
+    if (!reqUser) {
         sendPug(res, "account-edit", {
             errorMessage: "You must be logged in to change your password"
         });
@@ -103,7 +136,6 @@ function handleChangePassword(req, res) {
                     });
                 }
 
-                res.user = user;
                 var expiration = new Date(parseInt(req.signedCookies.auth.split(":")[1]));
                 session.genSession(user, expiration, function (err, auth) {
                     if (err) {
@@ -112,20 +144,7 @@ function handleChangePassword(req, res) {
                         });
                     }
 
-                    if (req.hostname.indexOf(Config.get("http.root-domain")) >= 0) {
-                        res.cookie("auth", auth, {
-                            domain: Config.get("http.root-domain-dotted"),
-                            expires: expiration,
-                            httpOnly: true,
-                            signed: true
-                        });
-                    } else {
-                        res.cookie("auth", auth, {
-                            expires: expiration,
-                            httpOnly: true,
-                            signed: true
-                        });
-                    }
+                    webserver.setAuthCookie(req, res, expiration, auth);
 
                     sendPug(res, "account-edit", {
                         successMessage: "Password changed."
@@ -186,18 +205,16 @@ function handleChangeEmail(req, res) {
 /**
  * Handles a GET request for /account/channels
  */
-function handleAccountChannelPage(req, res) {
-    if (webserver.redirectHttps(req, res)) {
-        return;
-    }
-
-    if (!req.user) {
+async function handleAccountChannelPage(req, res) {
+    const user = await webserver.authorize(req);
+    // TODO: error message
+    if (!user) {
         return sendPug(res, "account-channels", {
             channels: []
         });
     }
 
-    db.channels.listUserChannels(req.user.name, function (err, channels) {
+    db.channels.listUserChannels(user.name, function (err, channels) {
         sendPug(res, "account-channels", {
             channels: channels
         });
@@ -209,6 +226,11 @@ function handleAccountChannelPage(req, res) {
  */
 function handleAccountChannel(req, res) {
     csrf.verify(req);
+
+    if (!verifyReferrer(req, '/account/channels')) {
+        res.status(403).send('Mismatched referrer');
+        return;
+    }
 
     var action = req.body.action;
     switch(action) {
@@ -227,7 +249,7 @@ function handleAccountChannel(req, res) {
 /**
  * Handles a request to register a new channel
  */
-function handleNewChannel(req, res) {
+async function handleNewChannel(req, res) {
 
     var name = req.body.name;
     if (typeof name !== "string") {
@@ -235,13 +257,15 @@ function handleNewChannel(req, res) {
         return;
     }
 
-    if (!req.user) {
+    const user = await webserver.authorize(req);
+    // TODO: error message
+    if (!user) {
         return sendPug(res, "account-channels", {
             channels: []
         });
     }
 
-    db.channels.listUserChannels(req.user.name, function (err, channels) {
+    db.channels.listUserChannels(user.name, function (err, channels) {
         if (err) {
             sendPug(res, "account-channels", {
                 channels: [],
@@ -258,8 +282,8 @@ function handleNewChannel(req, res) {
             return;
         }
 
-        if (channels.length >= Config.get("max-channels-per-user") &&
-                req.user.global_rank < 255) {
+        if (channels.length >= Config.get("max-channels-per-user")
+                && user.global_rank < 255) {
             sendPug(res, "account-channels", {
                 channels: channels,
                 newChannelError: "You are not allowed to register more than " +
@@ -268,23 +292,15 @@ function handleNewChannel(req, res) {
             return;
         }
 
-        db.channels.register(name, req.user.name, function (err, channel) {
+        db.channels.register(name, user.name, function (err, channel) {
             if (!err) {
-                Logger.eventlog.log("[channel] " + req.user.name + "@" +
+                Logger.eventlog.log("[channel] " + user.name + "@" +
                                     req.realIP +
                                     " registered channel " + name);
-                var sv = Server.getServer();
-                if (sv.isChannelLoaded(name)) {
-                    var chan = sv.getChannel(name);
-                    var users = Array.prototype.slice.call(chan.users);
-                    users.forEach(function (u) {
-                        u.kick("Channel reloading");
-                    });
+                globalMessageBus.emit('ChannelRegistered', {
+                    channel: name
+                });
 
-                    if (!chan.dead) {
-                        chan.emit("empty");
-                    }
-                }
                 channels.push({
                     name: name
                 });
@@ -302,14 +318,16 @@ function handleNewChannel(req, res) {
 /**
  * Handles a request to delete a new channel
  */
-function handleDeleteChannel(req, res) {
+async function handleDeleteChannel(req, res) {
     var name = req.body.name;
     if (typeof name !== "string") {
         res.send(400);
         return;
     }
 
-    if (!req.user) {
+    const user = await webserver.authorize(req);
+    // TODO: error
+    if (!user) {
         return sendPug(res, "account-channels", {
             channels: [],
         });
@@ -325,8 +343,8 @@ function handleDeleteChannel(req, res) {
             return;
         }
 
-        if (channel.owner !== req.user.name && req.user.global_rank < 255) {
-            db.channels.listUserChannels(req.user.name, function (err2, channels) {
+        if ((!channel.owner || channel.owner.toLowerCase() !== user.name.toLowerCase()) && user.global_rank < 255) {
+            db.channels.listUserChannels(user.name, function (err2, channels) {
                 sendPug(res, "account-channels", {
                     channels: err2 ? [] : channels,
                     deleteChannelError: "You do not have permission to delete this channel"
@@ -337,24 +355,16 @@ function handleDeleteChannel(req, res) {
 
         db.channels.drop(name, function (err) {
             if (!err) {
-                Logger.eventlog.log("[channel] " + req.user.name + "@" +
+                Logger.eventlog.log("[channel] " + user.name + "@" +
                                     req.realIP + " deleted channel " +
                                     name);
             }
-            var sv = Server.getServer();
-            if (sv.isChannelLoaded(name)) {
-                var chan = sv.getChannel(name);
-                chan.clearFlag(require("../flags").C_REGISTERED);
-                var users = Array.prototype.slice.call(chan.users);
-                users.forEach(function (u) {
-                    u.kick("Channel reloading");
-                });
 
-                if (!chan.dead) {
-                    chan.emit("empty");
-                }
-            }
-            db.channels.listUserChannels(req.user.name, function (err2, channels) {
+            globalMessageBus.emit('ChannelDeleted', {
+                channel: name
+            });
+
+            db.channels.listUserChannels(user.name, function (err2, channels) {
                 sendPug(res, "account-channels", {
                     channels: err2 ? [] : channels,
                     deleteChannelError: err ? err : undefined
@@ -367,19 +377,17 @@ function handleDeleteChannel(req, res) {
 /**
  * Handles a GET request for /account/profile
  */
-function handleAccountProfilePage(req, res) {
-    if (webserver.redirectHttps(req, res)) {
-        return;
-    }
-
-    if (!req.user) {
+async function handleAccountProfilePage(req, res) {
+    const user = await webserver.authorize(req);
+    // TODO: error message
+    if (!user) {
         return sendPug(res, "account-profile", {
             profileImage: "",
             profileText: ""
         });
     }
 
-    db.users.getProfile(req.user.name, function (err, profile) {
+    db.users.getProfile(user.name, function (err, profile) {
         if (err) {
             sendPug(res, "account-profile", {
                 profileError: err,
@@ -419,10 +427,17 @@ function validateProfileImage(image, callback) {
 /**
  * Handles a POST request to edit a profile
  */
-function handleAccountProfile(req, res) {
+async function handleAccountProfile(req, res) {
     csrf.verify(req);
 
-    if (!req.user) {
+    if (!verifyReferrer(req, '/account/profile')) {
+        res.status(403).send('Mismatched referrer');
+        return;
+    }
+
+    const user = await webserver.authorize(req);
+    // TODO: error message
+    if (!user) {
         return sendPug(res, "account-profile", {
             profileImage: "",
             profileText: "",
@@ -435,7 +450,7 @@ function handleAccountProfile(req, res) {
 
     validateProfileImage(rawImage, (error, image) => {
         if (error) {
-            db.users.getProfile(req.user.name, function (err, profile) {
+            db.users.getProfile(user.name, function (err, profile) {
                 var errorMessage = err || error.message;
                 sendPug(res, "account-profile", {
                     profileImage: profile ? profile.image : "",
@@ -446,7 +461,7 @@ function handleAccountProfile(req, res) {
             return;
         }
 
-        db.users.setProfile(req.user.name, { image: image, text: text }, function (err) {
+        db.users.setProfile(user.name, { image: image, text: text }, function (err) {
             if (err) {
                 sendPug(res, "account-profile", {
                     profileImage: "",
@@ -455,6 +470,14 @@ function handleAccountProfile(req, res) {
                 });
                 return;
             }
+
+            globalMessageBus.emit('UserProfileChanged', {
+                user: user.name,
+                profile: {
+                    image,
+                    text
+                }
+            });
 
             sendPug(res, "account-profile", {
                 profileImage: image,
@@ -469,10 +492,6 @@ function handleAccountProfile(req, res) {
  * Handles a GET request for /account/passwordreset
  */
 function handlePasswordResetPage(req, res) {
-    if (webserver.redirectHttps(req, res)) {
-        return;
-    }
-
     sendPug(res, "account-passwordreset", {
         reset: false,
         resetEmail: "",
@@ -485,6 +504,11 @@ function handlePasswordResetPage(req, res) {
  */
 function handlePasswordReset(req, res) {
     csrf.verify(req);
+
+    if (!verifyReferrer(req, '/account/passwordreset')) {
+        res.status(403).send('Mismatched referrer');
+        return;
+    }
 
     var name = req.body.name,
         email = req.body.email;
@@ -554,7 +578,7 @@ function handlePasswordReset(req, res) {
             Logger.eventlog.log("[account] " + ip + " requested password recovery for " +
                                 name + " <" + email + ">");
 
-            if (!Config.get("mail.enabled")) {
+            if (!emailConfig.getPasswordReset().isEnabled()) {
                 sendPug(res, "account-passwordreset", {
                     reset: false,
                     resetEmail: email,
@@ -564,37 +588,26 @@ function handlePasswordReset(req, res) {
                 return;
             }
 
-            var msg = "A password reset request was issued for your " +
-                      "account `"+ name + "` on " + Config.get("http.domain") +
-                      ".  This request is valid for 24 hours.  If you did "+
-                      "not initiate this, there is no need to take action."+
-                      "  To reset your password, copy and paste the " +
-                      "following link into your browser: " +
-                      Config.get("http.domain") + "/account/passwordrecover/"+hash;
+            const baseUrl = `${req.realProtocol}://${req.header("host")}`;
 
-            var mail = {
-                from: Config.get("mail.from-name") + " <" + Config.get("mail.from-address") + ">",
-                to: email,
-                subject: "Password reset request",
-                text: msg
-            };
-
-            Config.get("mail.nodemailer").sendMail(mail, function (err, response) {
-                if (err) {
-                    Logger.errlog.log("mail fail: " + err);
-                    sendPug(res, "account-passwordreset", {
-                        reset: false,
-                        resetEmail: email,
-                        resetErr: "Sending reset email failed.  Please contact an " +
-                                  "administrator for assistance."
-                    });
-                } else {
-                    sendPug(res, "account-passwordreset", {
-                        reset: true,
-                        resetEmail: email,
-                        resetErr: false
-                    });
-                }
+            emailController.sendPasswordReset({
+                username: name,
+                address: email,
+                url: `${baseUrl}/account/passwordrecover/${hash}`
+            }).then(result => {
+                sendPug(res, "account-passwordreset", {
+                    reset: true,
+                    resetEmail: email,
+                    resetErr: false
+                });
+            }).catch(error => {
+                LOGGER.error("Sending password reset email failed: %s", error);
+                sendPug(res, "account-passwordreset", {
+                    reset: false,
+                    resetEmail: email,
+                    resetErr: "Sending reset email failed.  Please contact an " +
+                              "administrator for assistance."
+                });
             });
         });
     });
@@ -662,7 +675,11 @@ module.exports = {
     /**
      * Initialize the module
      */
-    init: function (app) {
+    init: function (app, _globalMessageBus, _emailConfig, _emailController) {
+        globalMessageBus = _globalMessageBus;
+        emailConfig = _emailConfig;
+        emailController = _emailController;
+
         app.get("/account/edit", handleAccountEditPage);
         app.post("/account/edit", handleAccountEdit);
         app.get("/account/channels", handleAccountChannelPage);

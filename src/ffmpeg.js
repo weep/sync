@@ -5,7 +5,46 @@ var https = require("https");
 var http = require("http");
 var urlparse = require("url");
 var path = require("path");
-require("status-message-polyfill");
+
+import { callOnce } from './util/call-once';
+
+const LOGGER = require('@calzoneman/jsli')('ffmpeg');
+const ECODE_MESSAGES = {
+    ENOTFOUND: e => (
+        `Unknown host "${e.hostname}".  ` +
+        'Please check that the link is correct.'
+    ),
+    EPROTO: e => 'The remote server does not support HTTPS.',
+    ECONNRESET: e => 'The remote server unexpectedly closed the connection.',
+    ECONNREFUSED: e => (
+        'The remote server refused the connection.  ' +
+        'Please check that the link is correct and the server is running.'
+    ),
+    ETIMEDOUT: e => (
+        'The connection to the remote server timed out.  ' +
+        'Please check that the link is correct.'
+    ),
+    ENETUNREACH: e => (
+        "The remote server's network is unreachable from this server.  " +
+        "Please contact an administrator for assistance."
+    ),
+
+    DEPTH_ZERO_SELF_SIGNED_CERT: e => (
+        'The remote server provided an invalid ' +
+        '(self-signed) SSL certificate.  Raw file support requires a ' +
+        'trusted certificate.  See https://letsencrypt.org/ to get ' +
+        'a free, trusted certificate.'
+    ),
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: e => (
+        "The remote server's SSL certificate chain could not be validated.  " +
+        "Please contact the administrator of the server to correct their " +
+        "SSL certificate configuration."
+    ),
+    CERT_HAS_EXPIRED: e => (
+        "The remote server's SSL certificate has expired.  Please contact " +
+        "the administrator of the server to renew the certificate."
+    )
+};
 
 var USE_JSON = true;
 var TIMEOUT = 30000;
@@ -59,6 +98,8 @@ function translateStatusCode(statusCode) {
                 "the file to be downloaded.";
         case 404:
             return "The requested link could not be found (404).";
+        case 410:
+            return "The requested link does not exist (410 Gone).";
         case 500:
         case 503:
             return "The website hosting the audio/video link encountered an error " +
@@ -71,8 +112,16 @@ function translateStatusCode(statusCode) {
     }
 }
 
-function testUrl(url, cb, redirCount) {
-    if (!redirCount) redirCount = 0;
+function getCookie(res) {
+    if (!res.headers['set-cookie']) {
+        return '';
+    }
+
+    return res.headers['set-cookie'].map(c => c.split(';')[0]).join(';') + ';';
+}
+
+function testUrl(url, cb, params = { redirCount: 0, cookie: '' }) {
+    const { redirCount, cookie } = params;
     var data = urlparse.parse(url);
     if (!/https:/.test(data.protocol)) {
         return cb("Only links starting with 'https://' are supported " +
@@ -86,6 +135,9 @@ function testUrl(url, cb, redirCount) {
 
     var transport = (data.protocol === "https:") ? https : http;
     data.method = "HEAD";
+    if (cookie) {
+        data.headers = { 'Cookie': cookie };
+    }
     var req = transport.request(data, function (res) {
         req.abort();
 
@@ -96,8 +148,12 @@ function testUrl(url, cb, redirCount) {
                           "on the website hosting the link.  For best results, use " +
                           "a direct link.  See https://git.io/vrE75 for details.");
             }
+            const nextParams = {
+                redirCount: redirCount + 1,
+                cookie: cookie + getCookie(res)
+            };
             return testUrl(fixRedirectIfNeeded(data, res.headers["location"]), cb,
-                    redirCount + 1);
+                    nextParams);
         }
 
         if (res.statusCode !== 200) {
@@ -116,6 +172,28 @@ function testUrl(url, cb, redirCount) {
     });
 
     req.on("error", function (err) {
+        if (/hostname\/ip doesn't match/i.test(err.message)) {
+            cb("The remote server provided an invalid SSL certificate.  Details: "
+                    + err.reason);
+            return;
+        } else if (ECODE_MESSAGES.hasOwnProperty(err.code)) {
+            cb(`${ECODE_MESSAGES[err.code](err)} (error code: ${err.code})`);
+            return;
+        }
+
+        // HPE_INVALID_CONSTANT comes from node's HTTP parser because
+        // facebook's CDN violates RFC 2616 by sending a body even though
+        // the request uses the HEAD method.
+        // Avoid logging this because it's a known issue.
+        if (!(err.code === 'HPE_INVALID_CONSTANT' && /fbcdn/.test(url))) {
+            LOGGER.error(
+                "Error sending preflight request: %s (code=%s) (link: %s)",
+                err.message,
+                err.code,
+                url
+            );
+        }
+
         cb("An unexpected error occurred while trying to process the link.  " +
            "Try again, and contact support for further troubleshooting if the " +
            "problem continues." + (!!err.code ? (" Error code: " + err.code) : ""));
@@ -244,12 +322,15 @@ exports.ffprobe = function ffprobe(filename, cb) {
     var stdout = "";
     var stderr = "";
     var timer = setTimeout(function () {
-        Logger.errlog.log("Possible runaway ffprobe process for file " + filename);
+        LOGGER.warn("Timed out when probing " + filename);
         fflog("Killing ffprobe for " + filename + " after " + (TIMEOUT/1000) + " seconds");
-        childErr = new Error("File query exceeded time limit of " + (TIMEOUT/1000) +
-                             " seconds.  To avoid this issue, encode your videos " +
-                             "using the 'faststart' option: " +
-                             "https://trac.ffmpeg.org/wiki/Encode/H.264#faststartforwebvideo");
+        childErr = new Error(
+                "File query exceeded time limit of " + (TIMEOUT/1000) +
+                " seconds.  This can be caused if the remote server is far " +
+                "away or if you did not encode the video " +
+                "using the 'faststart' option: " +
+                "https://trac.ffmpeg.org/wiki/Encode/H.264#faststartforwebvideo"
+        );
         child.kill("SIGKILL");
     }, TIMEOUT);
 
@@ -277,7 +358,7 @@ exports.ffprobe = function ffprobe(filename, cb) {
         fflog("ffprobe exited with code " + code + " for file " + filename);
         if (code !== 0) {
             if (stderr.match(/unrecognized option|json/i) && USE_JSON) {
-                Logger.errlog.log("Warning: ffprobe does not support -of json.  " +
+                LOGGER.warn("ffprobe does not support -of json.  " +
                                   "Assuming it will have old output format.");
                 USE_JSON = false;
                 return ffprobe(filename, cb);
@@ -320,7 +401,7 @@ exports.query = function (filename, cb) {
                   "Ensure that the link begins with 'https://'.");
     }
 
-    testUrl(filename, function (err) {
+    testUrl(filename, callOnce(function (err) {
         if (err) {
             return cb(err);
         }
@@ -346,13 +427,13 @@ exports.query = function (filename, cb) {
                     // Ignore ffprobe error messages, they are common and most often
                     // indicate a problem with the remote file, not with this code.
                     if (!/(av|ff)probe/.test(String(err)))
-                        Logger.errlog.log(err.stack || err);
+                        LOGGER.error(err.stack || err);
                     return cb("An unexpected error occurred while trying to process " +
                               "the link.  Contact support for troubleshooting " +
                               "assistance.");
                 } else {
                     if (!/(av|ff)probe/.test(String(err)))
-                        Logger.errlog.log(err.stack || err);
+                        LOGGER.error(err.stack || err);
                     return cb("An unexpected error occurred while trying to process " +
                               "the link.  Contact support for troubleshooting " +
                               "assistance.");
@@ -362,7 +443,7 @@ exports.query = function (filename, cb) {
             try {
                 data = reformatData(data);
             } catch (e) {
-                Logger.errlog.log(e.stack || e);
+                LOGGER.error(e.stack || e);
                 return cb("An unexpected error occurred while trying to process " +
                           "the link.  Contact support for troubleshooting " +
                           "assistance.");
@@ -391,5 +472,5 @@ exports.query = function (filename, cb) {
                           "https://git.io/vrE75 for details.");
             }
         });
-    });
+    }));
 };

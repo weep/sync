@@ -1,5 +1,8 @@
 var ChannelModule = require("./module");
 var Poll = require("../poll").Poll;
+import { ValidationError } from '../errors';
+import Config from '../config';
+import { ackOrErrorMsg } from '../util/ack';
 
 const TYPE_NEW_POLL = {
     title: "string",
@@ -25,6 +28,7 @@ function PollModule(channel) {
         this.channel.modules.chat.registerCommand("poll", this.handlePollCmd.bind(this, false));
         this.channel.modules.chat.registerCommand("hpoll", this.handlePollCmd.bind(this, true));
     }
+    this.supportsDirtyCheck = true;
 }
 
 PollModule.prototype = Object.create(ChannelModule.prototype);
@@ -46,6 +50,8 @@ PollModule.prototype.load = function (data) {
             this.poll.timestamp = data.poll.timestamp;
         }
     }
+
+    this.dirty = false;
 };
 
 PollModule.prototype.save = function (data) {
@@ -130,16 +136,57 @@ PollModule.prototype.broadcastPoll = function (isNewPoll) {
     this.channel.broadcastToRoom(event, obscured, this.roomNoViewHidden);
 };
 
-PollModule.prototype.handleNewPoll = function (user, data) {
+PollModule.prototype.validatePollInput = function validatePollInput(title, options) {
+    if (typeof title !== 'string') {
+        throw new ValidationError('Poll title must be a string.');
+    }
+    if (title.length > 255) {
+        throw new ValidationError('Poll title must be no more than 255 characters long.');
+    }
+    if (!Array.isArray(options)) {
+        throw new ValidationError('Poll options must be an array.');
+    }
+    if (options.length > Config.get('poll.max-options')) {
+        throw new ValidationError(`Polls are limited to a maximum of ${Config.get('poll.max-options')} options.`);
+    }
+    for (let i = 0; i < options.length; i++) {
+        if (typeof options[i] !== 'string') {
+            throw new ValidationError('Poll options must be strings.');
+        }
+        if (options[i].length === 0 || options[i].length > 255) {
+            throw new ValidationError('Poll options must be 1-255 characters long.');
+        }
+    }
+};
+
+PollModule.prototype.handleNewPoll = function (user, data, ack) {
     if (!this.channel.modules.permissions.canControlPoll(user)) {
         return;
     }
 
-    var title = data.title.substring(0, 255);
-    var opts = data.opts.map(function (x) { return (""+x).substring(0, 255); });
-    var obscured = data.obscured;
+    ack = ackOrErrorMsg(ack, user);
 
-    var poll = new Poll(user.getName(), title, opts, obscured);
+    if (typeof data !== 'object' || data === null) {
+        ack({
+            error: {
+                message: 'Invalid data received for poll creation.'
+            }
+        });
+        return;
+    }
+
+    try {
+        this.validatePollInput(data.title, data.opts);
+    } catch (error) {
+        ack({
+            error: {
+                message: error.message
+            }
+        });
+        return;
+    }
+
+    var poll = new Poll(user.getName(), data.title, data.opts, data.obscured);
     var self = this;
     if (data.hasOwnProperty("timeout") && !isNaN(data.timeout) && data.timeout > 0) {
         poll.timer = setTimeout(function () {
@@ -153,8 +200,10 @@ PollModule.prototype.handleNewPoll = function (user, data) {
     }
 
     this.poll = poll;
+    this.dirty = true;
     this.broadcastPoll(true);
     this.channel.logger.log("[poll] " + user.getName() + " opened poll: '" + poll.title + "'");
+    ack({});
 };
 
 PollModule.prototype.handleVote = function (user, data) {
@@ -164,6 +213,7 @@ PollModule.prototype.handleVote = function (user, data) {
 
     if (this.poll) {
         this.poll.vote(user.realip, data.option);
+        this.dirty = true;
         this.broadcastPoll(false);
     }
 };
@@ -186,6 +236,7 @@ PollModule.prototype.handleClosePoll = function (user) {
         this.channel.broadcastAll("closePoll");
         this.channel.logger.log("[poll] " + user.getName() + " closed the active poll");
         this.poll = null;
+        this.dirty = true;
     }
 };
 
@@ -198,8 +249,19 @@ PollModule.prototype.handlePollCmd = function (obscured, user, msg, meta) {
 
     var args = msg.split(",");
     var title = args.shift();
+
+    try {
+        this.validatePollInput(title, args);
+    } catch (error) {
+        user.socket.emit('errorMsg', {
+            msg: 'Error creating poll: ' + error.message
+        });
+        return;
+    }
+
     var poll = new Poll(user.getName(), title, args, obscured);
     this.poll = poll;
+    this.dirty = true;
     this.broadcastPoll(true);
     this.channel.logger.log("[poll] " + user.getName() + " opened poll: '" + poll.title + "'");
 };

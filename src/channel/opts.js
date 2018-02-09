@@ -31,8 +31,11 @@ function OptionsModule(channel) {
         allow_ascii_control: false,// Allow ASCII control characters (\x00-\x1f)
         playlist_max_per_user: 0,  // Maximum number of playlist items per user
         new_user_chat_delay: 0,      // Minimum account/IP age to chat
-        new_user_chat_link_delay: 0  // Minimum account/IP age to post links
+        new_user_chat_link_delay: 0, // Minimum account/IP age to post links
+        playlist_max_duration_per_user: 0 // Maximum total playlist time per user
     };
+
+    this.supportsDirtyCheck = true;
 }
 
 OptionsModule.prototype = Object.create(ChannelModule.prototype);
@@ -50,6 +53,7 @@ OptionsModule.prototype.load = function (data) {
             this.opts.chat_antiflood_params.burst);
     this.opts.chat_antiflood_params.sustained = Math.min(10,
             this.opts.chat_antiflood_params.sustained);
+    this.dirty = false;
 };
 
 OptionsModule.prototype.save = function (data) {
@@ -114,10 +118,17 @@ OptionsModule.prototype.handleSetOptions = function (user, data) {
     if ("voteskip_ratio" in data) {
         var ratio = parseFloat(data.voteskip_ratio);
         if (isNaN(ratio) || ratio < 0) {
-            ratio = 0;
+            user.socket.emit("validationError", {
+                target: "#cs-voteskip_ratio",
+                message: `Input must be a number 0 or greater, not "${data.voteskip_ratio}"`
+            });
+        } else {
+            this.opts.voteskip_ratio = ratio;
+            sendUpdate = true;
+            user.socket.emit("validationPassed", {
+                target: "#cs-voteskip_ratio"
+            });
         }
-        this.opts.voteskip_ratio = ratio;
-        sendUpdate = true;
     }
 
     if ("afk_timeout" in data) {
@@ -162,6 +173,18 @@ OptionsModule.prototype.handleSetOptions = function (user, data) {
         }
         this.opts.maxlength = ml;
         sendUpdate = true;
+    }
+
+    if ("playlist_max_duration_per_user" in data) {
+        const max = data.playlist_max_duration_per_user;
+        if (typeof max !== "number" || isNaN(max) || max < 0) {
+            user.socket.emit("errorMsg", {
+                msg: `Expected number for playlist_max_duration_per_user, not "${max}"`
+            });
+        } else {
+            this.opts.playlist_max_duration_per_user = max;
+            sendUpdate = true;
+        }
     }
 
     if ("externalcss" in data && user.account.effectiveRank >= 3) {
@@ -336,6 +359,7 @@ OptionsModule.prototype.handleSetOptions = function (user, data) {
 
     this.channel.logger.log("[mod] " + user.getName() + " updated channel options");
     if (sendUpdate) {
+        this.dirty = true;
         this.sendOpts(this.channel.users);
     }
 };

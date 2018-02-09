@@ -1,7 +1,7 @@
 var FilterList = require("cytubefilters");
 var ChannelModule = require("./module");
-var XSS = require("../xss");
-var Logger = require("../logger");
+
+const LOGGER = require('@calzoneman/jsli')('filters');
 
 /*
  * Converts JavaScript-style replacements ($1, $2, etc.) with
@@ -22,7 +22,6 @@ function validateFilter(f) {
     }
 
     f.replace = fixReplace(f.replace.substring(0, 1000));
-    f.replace = XSS.sanitizeHTML(f.replace);
     f.flags = f.flags.substring(0, 4);
 
     try {
@@ -66,6 +65,7 @@ const DEFAULT_FILTERS = [
 function ChatFilterModule(channel) {
     ChannelModule.apply(this, arguments);
     this.filters = new FilterList();
+    this.supportsDirtyCheck = true;
 }
 
 ChatFilterModule.prototype = Object.create(ChannelModule.prototype);
@@ -78,13 +78,15 @@ ChatFilterModule.prototype.load = function (data) {
         try {
             this.filters = new FilterList(filters);
         } catch (e) {
-            Logger.errlog.log("Filter load failed: " + e + " (channel:" +
+            LOGGER.error("Filter load failed: " + e + " (channel:" +
                 this.channel.name);
             this.channel.logger.log("Failed to load filters: " + e);
         }
     } else {
         this.filters = new FilterList(DEFAULT_FILTERS);
     }
+
+    this.dirty = false;
 };
 
 ChatFilterModule.prototype.save = function (data) {
@@ -150,6 +152,8 @@ ChatFilterModule.prototype.handleAddFilter = function (user, data) {
         return;
     }
 
+    this.dirty = true;
+
     user.socket.emit("addFilterSuccess");
 
     var chan = this.channel;
@@ -198,6 +202,8 @@ ChatFilterModule.prototype.handleUpdateFilter = function (user, data) {
         return;
     }
 
+    this.dirty = true;
+
     var chan = this.channel;
     chan.users.forEach(function (u) {
         if (chan.modules.permissions.canEditFilters(u)) {
@@ -233,6 +239,8 @@ ChatFilterModule.prototype.handleImportFilters = function (user, data) {
         return;
     }
 
+    this.dirty = true;
+
     this.channel.logger.log("[mod] " + user.getName() + " imported the filter list");
     this.sendChatFilters(this.channel.users);
 };
@@ -259,6 +267,9 @@ ChatFilterModule.prototype.handleRemoveFilter = function (user, data) {
         });
         return;
     }
+
+    this.dirty = true;
+
     var chan = this.channel;
     chan.users.forEach(function (u) {
         if (chan.modules.permissions.canEditFilters(u)) {
@@ -291,6 +302,8 @@ ChatFilterModule.prototype.handleMoveFilter = function (user, data) {
         });
         return;
     }
+
+    this.dirty = true;
 };
 
 ChatFilterModule.prototype.handleRequestChatFilters = function (user) {

@@ -75,21 +75,26 @@ VoteskipModule.prototype.update = function () {
         return;
     }
 
-    this.sendVoteskipData(this.channel.users);
-
-    var max = this.calcVoteskipMax();
-    var need = Math.ceil(max * this.channel.modules.options.get("voteskip_ratio"));
+    const { total, eligible, noPermission, afk } = this.calcUsercounts();
+    const need = Math.ceil(eligible * this.channel.modules.options.get("voteskip_ratio"));
     if (this.poll.counts[0] >= need) {
-        this.channel.logger.log("[playlist] Voteskip passed.");
+        const info = `${this.poll.counts[0]}/${eligible} skipped; ` +
+            `eligible voters: ${eligible} = total (${total}) - AFK (${afk}) ` +
+            `- no permission (${noPermission}); ` +
+            `ratio = ${this.channel.modules.options.get("voteskip_ratio")}`;
+        this.channel.logger.log(`[playlist] Voteskip passed: ${info}`);
+        this.reset();
         this.channel.modules.playlist._playNext();
+    } else {
+        this.sendVoteskipData(this.channel.users);
     }
 };
 
 VoteskipModule.prototype.sendVoteskipData = function (users) {
-    var max = this.calcVoteskipMax();
+    const { eligible } = this.calcUsercounts();
     var data = {
         count: this.poll ? this.poll.counts[0] : 0,
-        need: this.poll ? Math.ceil(max * this.channel.modules.options.get("voteskip_ratio"))
+        need: this.poll ? Math.ceil(eligible * this.channel.modules.options.get("voteskip_ratio"))
                         : 0
     };
 
@@ -102,22 +107,29 @@ VoteskipModule.prototype.sendVoteskipData = function (users) {
     });
 };
 
-VoteskipModule.prototype.calcVoteskipMax = function () {
-    var perms = this.channel.modules.permissions;
-    return this.channel.users.map(function (u) {
-        if (!perms.canVoteskip(u)) {
-            return 0;
-        }
+VoteskipModule.prototype.calcUsercounts = function () {
+    const perms = this.channel.modules.permissions;
+    const counts = { total: 0, noPermission: 0, afk: 0 };
 
-        return u.is(Flags.U_AFK) ? 0 : 1;
-    }).reduce(function (a, b) {
-        return a + b;
-    }, 0);
+    this.channel.users.forEach(u => {
+        counts.total++;
+
+        if (!perms.canVoteskip(u))  counts.noPermission++;
+        else if (u.is(Flags.U_AFK)) counts.afk++;
+    });
+
+    counts.eligible = counts.total - (counts.noPermission + counts.afk);
+
+    return counts;
+};
+
+VoteskipModule.prototype.reset = function reset() {
+    this.poll = false;
+    this.sendVoteskipData(this.channel.users);
 };
 
 VoteskipModule.prototype.onMediaChange = function (data) {
-    this.poll = false;
-    this.sendVoteskipData(this.channel.users);
+    this.reset();
 };
 
 module.exports = VoteskipModule;

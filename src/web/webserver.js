@@ -1,9 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import net from 'net';
-import express from 'express';
 import { sendPug } from './pug';
-import Logger from '../logger';
 import Config from '../config';
 import bodyParser from 'body-parser';
 import cookieParser from 'cookie-parser';
@@ -12,7 +10,13 @@ import morgan from 'morgan';
 import csrf from './csrf';
 import * as HTTPStatus from './httpstatus';
 import { CSRFError, HTTPError } from '../errors';
-import counters from "../counters";
+import counters from '../counters';
+import { Summary, Counter } from 'prom-client';
+import session from '../session';
+import { verify as csrfVerify } from './csrf';
+const verifySessionAsync = require('bluebird').promisify(session.verifySession);
+
+const LOGGER = require('@calzoneman/jsli')('webserver');
 
 function initializeLog(app) {
     const logFormat = ':real-address - :remote-user [:date] ":method :url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"';
@@ -27,58 +31,37 @@ function initializeLog(app) {
     }));
 }
 
-/**
- * Redirects a request to HTTPS if the server supports it
- */
-function redirectHttps(req, res) {
-    if (req.realProtocol !== 'https' && Config.get('https.enabled') &&
-            Config.get('https.redirect')) {
-        var ssldomain = Config.get('https.full-address');
-        if (ssldomain.indexOf(req.hostname) < 0) {
-            return false;
-        }
-
-        res.redirect(ssldomain + req.path);
-        return true;
-    }
-    return false;
-}
-
-/**
- * Legacy socket.io configuration endpoint.  This is being migrated to
- * /socketconfig/<channel name>.json (see ./routes/socketconfig.js)
- */
-function handleLegacySocketConfig(req, res) {
-    if (/\.json$/.test(req.path)) {
-        res.json(Config.get('sioconfigjson'));
-        return;
-    }
-
-    res.type('application/javascript');
-
-    var sioconfig = Config.get('sioconfig');
-    var iourl;
-    var ip = req.realIP;
-    var ipv6 = false;
-
-    if (net.isIPv6(ip)) {
-        iourl = Config.get('io.ipv6-default');
-        ipv6 = true;
-    }
-
-    if (!iourl) {
-        iourl = Config.get('io.ipv4-default');
-    }
-
-    sioconfig += 'var IO_URL=\'' + iourl + '\';';
-    sioconfig += 'var IO_V6=' + ipv6 + ';';
-    res.send(sioconfig);
-}
-
-function handleUserAgreement(req, res) {
-    sendPug(res, 'tos', {
-        domain: Config.get('http.domain')
+function initPrometheus(app) {
+    const latency = new Summary({
+        name: 'cytube_http_req_duration_seconds',
+        help: 'HTTP Request latency from execution of the first middleware '
+                + 'until the "finish" event on the response object.',
+        labelNames: ['method', 'statusCode']
     });
+    const requests = new Counter({
+        name: 'cytube_http_req_total',
+        help: 'HTTP Request count',
+        labelNames: ['method', 'statusCode']
+    });
+
+    app.use((req, res, next) => {
+        const startTime = process.hrtime();
+        res.on('finish', () => {
+            try {
+                const diff = process.hrtime(startTime);
+                const diffSec = diff[0] + diff[1]*1e-9;
+                latency.labels(req.method, res.statusCode).observe(diffSec);
+                requests.labels(req.method, res.statusCode).inc(1, new Date());
+            } catch (error) {
+                LOGGER.error('Failed to record HTTP Prometheus metrics: %s', error.stack);
+            }
+        });
+        next();
+    });
+
+    setInterval(() => {
+        latency.reset();
+    }, 5 * 60 * 1000).unref();
 }
 
 function initializeErrorHandlers(app) {
@@ -111,7 +94,7 @@ function initializeErrorHandlers(app) {
 
             // Log 5xx (server) errors
             if (Math.floor(status / 100) === 5) {
-                Logger.errlog.log(err.stack);
+                LOGGER.error(err.stack);
             }
 
             res.status(status);
@@ -126,27 +109,68 @@ function initializeErrorHandlers(app) {
     });
 }
 
+function patchExpressToHandleAsync() {
+    const Layer = require('express/lib/router/layer');
+    // https://github.com/expressjs/express/blob/4.x/lib/router/layer.js#L86
+    Layer.prototype.handle_request = function handle(req, res, next) {
+        const fn = this.handle;
+
+        if (fn.length > 3) {
+            next();
+        }
+
+        try {
+            const result = fn(req, res, next);
+
+            if (result && result.catch) {
+                result.catch(error => next(error));
+            }
+        } catch (error) {
+            next(error);
+        }
+    };
+}
+
 module.exports = {
     /**
      * Initializes webserver callbacks
      */
-    init: function (app, webConfig, ioConfig, clusterClient, channelIndex, session) {
+    init: function (
+        app,
+        webConfig,
+        ioConfig,
+        clusterClient,
+        channelIndex,
+        session,
+        globalMessageBus,
+        accountController,
+        channelDB,
+        emailConfig,
+        emailController
+    ) {
+        patchExpressToHandleAsync();
+        const chanPath = Config.get('channel-path');
+
+        initPrometheus(app);
         app.use((req, res, next) => {
             counters.add("http:request", 1);
             next();
         });
-        require('./middleware/x-forwarded-for')(app, webConfig);
+        require('./middleware/x-forwarded-for').initialize(app, webConfig);
         app.use(bodyParser.urlencoded({
             extended: false,
             limit: '1kb' // No POST data should ever exceed this size under normal usage
         }));
+        app.use(bodyParser.json({
+            limit: '1kb'
+        }));
         if (webConfig.getCookieSecret() === 'change-me') {
-            Logger.errlog.log('WARNING: The configured cookie secret was left as the ' +
+            LOGGER.warn('The configured cookie secret was left as the ' +
                     'default of "change-me".');
         }
         app.use(cookieParser(webConfig.getCookieSecret()));
         app.use(csrf.init(webConfig.getCookieDomain()));
-        app.use('/r/:channel', require('./middleware/ipsessioncookie').ipSessionCookieMiddleware);
+        app.use(`/${chanPath}/:channel`, require('./middleware/ipsessioncookie').ipSessionCookieMiddleware);
         initializeLog(app);
         require('./middleware/authorize')(app, session);
 
@@ -154,7 +178,7 @@ module.exports = {
             app.use(require('compression')({
                 threshold: webConfig.getGzipThreshold()
             }));
-            Logger.syslog.log('Enabled gzip compression');
+            LOGGER.info('Enabled gzip compression');
         }
 
         if (webConfig.getEnableMinification()) {
@@ -172,20 +196,32 @@ module.exports = {
             app.use(require('express-minify')({
                 cache: cacheDir
             }));
-            Logger.syslog.log('Enabled express-minify for CSS and JS');
+            LOGGER.info('Enabled express-minify for CSS and JS');
         }
 
-        require('./routes/channel')(app, ioConfig);
+        require('./routes/channel')(app, ioConfig, chanPath);
         require('./routes/index')(app, channelIndex, webConfig.getMaxIndexEntries());
-        app.get('/sioconfig(.json)?', handleLegacySocketConfig);
         require('./routes/socketconfig')(app, clusterClient);
-        app.get('/useragreement', handleUserAgreement);
         require('./routes/contact')(app, webConfig);
         require('./auth').init(app);
-        require('./account').init(app);
-        require('./acp').init(app);
+        require('./account').init(app, globalMessageBus, emailConfig, emailController);
+        require('./acp').init(app, ioConfig);
         require('../google2vtt').attach(app);
         require('./routes/google_drive_userscript')(app);
+
+        if (process.env.UNFINISHED_FEATURE) {
+            const { AccountDataRoute } = require('./routes/account/data');
+            require('@calzoneman/express-babel-decorators').bind(
+                app,
+                new AccountDataRoute(
+                    accountController,
+                    channelDB,
+                    csrfVerify,
+                    verifySessionAsync
+                )
+            );
+        }
+
         app.use(serveStatic(path.join(__dirname, '..', '..', 'www'), {
             maxAge: webConfig.getCacheTTL()
         }));
@@ -193,5 +229,34 @@ module.exports = {
         initializeErrorHandlers(app);
     },
 
-    redirectHttps: redirectHttps
+    authorize: async function authorize(req) {
+        if (!req.signedCookies || !req.signedCookies.auth) {
+            return false;
+        }
+
+        try {
+            return await verifySessionAsync(req.signedCookies.auth);
+        } catch (error) {
+            return false;
+        }
+    },
+
+    setAuthCookie: function setAuthCookie(req, res, expiration, auth) {
+        if (req.hostname.indexOf(Config.get("http.root-domain")) >= 0) {
+            // Prevent non-root cookie from screwing things up
+            res.clearCookie("auth");
+            res.cookie("auth", auth, {
+                domain: Config.get("http.root-domain-dotted"),
+                expires: expiration,
+                httpOnly: true,
+                signed: true
+            });
+        } else {
+            res.cookie("auth", auth, {
+                expires: expiration,
+                httpOnly: true,
+                signed: true
+            });
+        }
+    }
 };
